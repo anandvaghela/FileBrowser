@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --base-fm: "Lato", Arial, Helvetica, sans-serif;
+  --theme-clr: #007aff;
+  --hover-clr: #0065d4;
+  --lightTheme-clr: #deeeff;
+  --bg-page: #ffffff;
+  --border: #ebebeb;
+  --border-light: #f0f0f0;
+  --text-primary: #333333;
+  --text-secondary: #555555;
+  --text-muted: #929292;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  html {
+    font-family: var(--base-fm);
+    font-size: 16px;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--base-fm);
+    color: var(--text-primary);
+    background: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
+  ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+}
+
+@layer utilities {
+  .animation-delay-200 { animation-delay: 200ms; }
+  .animation-delay-400 { animation-delay: 400ms; }
+  .animation-delay-2000 { animation-delay: 2s; }
+  .animation-delay-4000 { animation-delay: 4s; }
+}

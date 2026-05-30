@@ -1,0 +1,1089 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "FileBrowser Backend API",
+    "description": "Full API reference and interactive testing interface for the FileBrowser Node.js/Express backend.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "API Base URL"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    },
+    {
+      "XAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Enter the JWT token (without 'Bearer ' prefix)."
+      },
+      "XAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Auth",
+        "description": "Alternative authorization header using 'X-Auth'."
+      }
+    },
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "username": { "type": "string" },
+          "scope": { "type": "string" },
+          "locale": { "type": "string" },
+          "viewMode": { "type": "string" },
+          "singleClick": { "type": "boolean" },
+          "lockPassword": { "type": "boolean" },
+          "hideDotfiles": { "type": "boolean" },
+          "dateFormat": { "type": "boolean" },
+          "commands": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "rules": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "perm": {
+            "type": "object",
+            "properties": {
+              "admin": { "type": "boolean" },
+              "execute": { "type": "boolean" },
+              "create": { "type": "boolean" },
+              "rename": { "type": "boolean" },
+              "modify": { "type": "boolean" },
+              "delete": { "type": "boolean" },
+              "share": { "type": "boolean" },
+              "download": { "type": "boolean" }
+            }
+          },
+          "createdAt": { "type": "integer" },
+          "updatedAt": { "type": "integer" }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "signup": { "type": "boolean" },
+          "createUserDir": { "type": "boolean" },
+          "userHomeBasePath": { "type": "string" },
+          "minimumPasswordLength": { "type": "integer" },
+          "hideDotfiles": { "type": "boolean" },
+          "branding": { "type": "object" },
+          "commands": { "type": "object" },
+          "shell": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "rules": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      },
+      "Share": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "hash": { "type": "string" },
+          "path": { "type": "string" },
+          "userId": { "type": "integer" },
+          "expire": { "type": "integer" },
+          "createdAt": { "type": "integer" }
+        }
+      },
+      "FileInfo": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "size": { "type": "integer" },
+          "path": { "type": "string" },
+          "url": { "type": "string" },
+          "isDir": { "type": "boolean" },
+          "modified": { "type": "string" },
+          "type": { "type": "string" },
+          "mode": { "type": "integer" },
+          "isSymlink": { "type": "boolean" },
+          "extension": { "type": "string" },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FileInfo" }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Authenticate User",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string", "example": "admin" },
+                  "password": { "type": "string", "example": "admin" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "user": { "$ref": "#/components/schemas/User" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Username and password required" },
+          "403": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/signup": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register a new user",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "User created successfully" },
+          "400": { "description": "Validation failed" },
+          "405": { "description": "Signup is disabled" },
+          "409": { "description": "Username already taken" }
+        }
+      }
+    },
+    "/renew": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Renew current JWT token",
+        "responses": {
+          "200": {
+            "description": "Token renewed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "user": { "$ref": "#/components/schemas/User" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/resources": {
+      "get": {
+        "tags": ["Resources"],
+        "summary": "List files and directories in root",
+        "responses": {
+          "200": {
+            "description": "List of files/directory structure",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FileInfo" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Resources"],
+        "summary": "Upload file or create directory in root",
+        "parameters": [
+          {
+            "name": "override",
+            "in": "query",
+            "schema": { "type": "boolean" },
+            "description": "Overwrite file if it exists"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": { "type": "string", "format": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Upload/Creation successful" },
+          "403": { "description": "Permission denied" }
+        }
+      }
+    },
+    "/resources/{path}": {
+      "get": {
+        "tags": ["Resources"],
+        "summary": "List sub-directory files or get sub-file info",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File or folder path relative to user scope"
+          },
+          {
+            "name": "checksum",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["md5", "sha1", "sha256", "sha512"] },
+            "description": "Calculate and return file checksum"
+          },
+          {
+            "name": "x-encoding",
+            "in": "header",
+            "schema": { "type": "boolean" },
+            "description": "Set to true to download text content raw"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "FileInfo returned",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/FileInfo" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      },
+      "post": {
+        "tags": ["Resources"],
+        "summary": "Upload file or create directory at specific path",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "File path, or folder path ending in '/'"
+          },
+          {
+            "name": "override",
+            "in": "query",
+            "schema": { "type": "boolean" },
+            "description": "Overwrite existing file"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": { "type": "string", "format": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "File/Directory created successfully" },
+          "409": { "description": "File already exists" }
+        }
+      },
+      "put": {
+        "tags": ["Resources"],
+        "summary": "Overwrite/Update file at path",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                }
+              }
+            },
+            "application/octet-stream": {
+              "schema": { "type": "string", "format": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "File updated successfully" },
+          "404": { "description": "File not found" }
+        }
+      },
+      "delete": {
+        "tags": ["Resources"],
+        "summary": "Delete file or directory at path",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No content, deleted successfully" },
+          "404": { "description": "Not found" }
+        }
+      },
+      "patch": {
+        "tags": ["Resources"],
+        "summary": "Copy or rename/move file/directory",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "destination",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Target path relative to scope"
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["rename", "copy"], "default": "rename" }
+          },
+          {
+            "name": "override",
+            "in": "query",
+            "schema": { "type": "boolean" }
+          },
+          {
+            "name": "rename",
+            "in": "query",
+            "schema": { "type": "boolean" },
+            "description": "Auto-suffix if destination exists"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Successful operation" },
+          "404": { "description": "Source not found" },
+          "409": { "description": "Destination exists" }
+        }
+      }
+    },
+    "/resources/recursive": {
+      "get": {
+        "tags": ["Resources"],
+        "summary": "Recursive listing of root folder files",
+        "responses": {
+          "200": {
+            "description": "Flat list array",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/FileInfo" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/recursive/{path}": {
+      "get": {
+        "tags": ["Resources"],
+        "summary": "Recursive listing of path sub-files",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Flat list array",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/FileInfo" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/search": {
+      "get": {
+        "tags": ["Search"],
+        "summary": "Search root folder",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Term or glob pattern (e.g. *.pdf, type:image)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "NDJSON stream of files",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string",
+                  "example": "{\"path\":\"/image.png\",\"dir\":false}\n{\"path\":\"/photo.jpg\",\"dir\":false}"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/search/{path}": {
+      "get": {
+        "tags": ["Search"],
+        "summary": "Search under path",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "NDJSON stream of files"
+          }
+        }
+      }
+    },
+    "/shares": {
+      "get": {
+        "tags": ["Shares"],
+        "summary": "List all share links",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Share" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/share/{path}": {
+      "get": {
+        "tags": ["Shares"],
+        "summary": "List share links for specific path",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Share" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Shares"],
+        "summary": "Create share link for path",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expires": { "type": "string", "example": "7" },
+                  "unit": { "type": "string", "enum": ["seconds", "minutes", "hours", "days"], "example": "days" },
+                  "password": { "type": "string", "example": "secret123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Share" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/share/{hash}": {
+      "delete": {
+        "tags": ["Shares"],
+        "summary": "Delete a share link",
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Deleted successfully" }
+        }
+      }
+    },
+    "/public/share/{hash}": {
+      "get": {
+        "tags": ["Shares"],
+        "summary": "Public: get share link details",
+        "security": [],
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "password",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public share file info"
+          }
+        }
+      }
+    },
+    "/public/dl/{hash}": {
+      "get": {
+        "tags": ["Shares"],
+        "summary": "Public: download shared file/directory",
+        "security": [],
+        "parameters": [
+          {
+            "name": "hash",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "password",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "File stream or zip stream download" }
+        }
+      }
+    },
+    "/preview/{size}/{path}": {
+      "get": {
+        "tags": ["Preview"],
+        "summary": "Get dynamic image thumbnail",
+        "parameters": [
+          {
+            "name": "size",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "enum": ["small", "medium", "big"] }
+          },
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes",
+            "content": {
+              "image/*": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/raw": {
+      "get": {
+        "tags": ["Raw"],
+        "summary": "Download root folder as zip",
+        "responses": {
+          "200": { "description": "Zip download stream" }
+        }
+      }
+    },
+    "/raw/{path}": {
+      "get": {
+        "tags": ["Raw"],
+        "summary": "Download file or folder as zip",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "inline",
+            "in": "query",
+            "schema": { "type": "boolean" },
+            "description": "Serve inline (e.g. to preview inside browser)"
+          }
+        ],
+        "responses": {
+          "200": { "description": "Binary file or folder zip" }
+        }
+      }
+    },
+    "/usage": {
+      "get": {
+        "tags": ["Usage"],
+        "summary": "Get disk usage of root folder",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer" },
+                    "used": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/usage/{path}": {
+      "get": {
+        "tags": ["Usage"],
+        "summary": "Get disk usage of folder",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer" },
+                    "used": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "tags": ["Users"],
+        "summary": "Admin: List all users",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/User" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Users"],
+        "summary": "Admin: Create a user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" },
+                  "scope": { "type": "string" },
+                  "locale": { "type": "string" },
+                  "viewMode": { "type": "string", "enum": ["mosaic", "list"] },
+                  "commands": { "type": "array", "items": { "type": "string" } },
+                  "perm": {
+                    "type": "object",
+                    "properties": {
+                      "admin": { "type": "boolean" },
+                      "execute": { "type": "boolean" },
+                      "create": { "type": "boolean" },
+                      "rename": { "type": "boolean" },
+                      "modify": { "type": "boolean" },
+                      "delete": { "type": "boolean" },
+                      "share": { "type": "boolean" },
+                      "download": { "type": "boolean" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "tags": ["Users"],
+        "summary": "Get user by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Users"],
+        "summary": "Update user details",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" },
+                  "currentPassword": { "type": "string" },
+                  "scope": { "type": "string" },
+                  "locale": { "type": "string" },
+                  "viewMode": { "type": "string" },
+                  "singleClick": { "type": "boolean" },
+                  "hideDotfiles": { "type": "boolean" },
+                  "dateFormat": { "type": "boolean" },
+                  "lockPassword": { "type": "boolean" },
+                  "commands": { "type": "array", "items": { "type": "string" } },
+                  "rules": { "type": "array", "items": { "type": "string" } },
+                  "perm": {
+                    "type": "object",
+                    "properties": {
+                      "admin": { "type": "boolean" },
+                      "execute": { "type": "boolean" },
+                      "create": { "type": "boolean" },
+                      "rename": { "type": "boolean" },
+                      "modify": { "type": "boolean" },
+                      "delete": { "type": "boolean" },
+                      "share": { "type": "boolean" },
+                      "download": { "type": "boolean" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Users"],
+        "summary": "Delete user by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Deleted successfully" }
+        }
+      }
+    },
+    "/settings": {
+      "get": {
+        "tags": ["Settings"],
+        "summary": "Admin: Get global settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Settings" }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["Settings"],
+        "summary": "Admin: Update global settings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Settings" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Settings" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tus": {
+      "options": {
+        "tags": ["TUS"],
+        "summary": "TUS preflight request",
+        "responses": {
+          "204": { "description": "Preflight headers" }
+        }
+      },
+      "post": {
+        "tags": ["TUS"],
+        "summary": "TUS creation request",
+        "parameters": [
+          {
+            "name": "Upload-Length",
+            "in": "header",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "Upload-Metadata",
+            "in": "header",
+            "schema": { "type": "string" },
+            "description": "Base64 metadata containing filePath / filename"
+          }
+        ],
+        "responses": {
+          "201": { "description": "Created, location header returned" }
+        }
+      }
+    },
+    "/tus/{id}": {
+      "head": {
+        "tags": ["TUS"],
+        "summary": "TUS check offset",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Upload info, upload-offset returned" }
+        }
+      },
+      "patch": {
+        "tags": ["TUS"],
+        "summary": "TUS append chunk",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "Upload-Offset",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "Content-Type",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string", "example": "application/offset+octet-stream" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/offset+octet-stream": {
+              "schema": { "type": "string", "format": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "204": { "description": "Chunk processed, upload-offset returned" }
+        }
+      },
+      "delete": {
+        "tags": ["TUS"],
+        "summary": "TUS terminate upload",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Terminated successfully" }
+        }
+      }
+    }
+  }
+}
