@@ -34,8 +34,8 @@ const Input = forwardRef<HTMLInputElement, InputProps>((
         <input
           ref={ref}
           className={clsx(
-            'w-full rounded-xl text-[#333333] placeholder-[#929292]',
-            variant === 'white' ? 'bg-white border border-[#ebebeb]' : 'bg-[#f6f6f6] border border-transparent',
+            'w-full rounded-lg text-[#333333] placeholder-[#b0b0b0]',
+            'bg-transparent border border-[#d9d9d9]',
             'focus:outline-none focus:border-[#007aff] transition-all duration-200',
             sizes[size],
             prefixIcon && 'pl-11',

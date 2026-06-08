@@ -33,8 +33,8 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>((
         <select
           ref={ref}
           className={clsx(
-            'w-full rounded-xl text-[#333333] appearance-none cursor-pointer pr-10',
-            variant === 'white' ? 'bg-white border border-[#ebebeb]' : 'bg-[#f6f6f6] border border-transparent',
+            'w-full rounded-lg text-[#333333] appearance-none cursor-pointer pr-10',
+            'bg-transparent border border-[#d9d9d9]',
             'focus:outline-none focus:border-[#007aff] transition-all duration-200',
             sizes[size],
             error && 'border-red-400',

@@ -6,7 +6,7 @@ import { getToken } from '@/lib/api'
 export default function Home() {
   const router = useRouter()
   useEffect(() => {
-    if (getToken()) router.replace('/dashboard')
+    if (getToken()) router.replace('/dashboard/files')
     else router.replace('/login')
   }, [router])
   return null

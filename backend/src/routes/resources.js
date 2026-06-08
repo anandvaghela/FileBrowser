@@ -49,6 +49,35 @@ router.get('/*', requireAuth, (req, res) => {
       sorting: req.user.sorting,
     });
 
+    // Filter items hidden from admin by users
+    if (stat.isDirectory() && info.items && req.user.perm.admin) {
+      const db = require('../db').getDb();
+      // Load all hidden items with their owner's scope
+      const hiddenRows = db.prepare(`
+        SELECT ui.item_path, u.scope
+        FROM user_items ui
+        JOIN users u ON u.id = ui.user_id
+        WHERE ui.show_to_admin = 0
+      `).all();
+
+      // Build a set of absolute-style paths as admin would see them
+      const hiddenPaths = new Set()
+      for (const row of hiddenRows) {
+        // scope e.g. '/alice', item_path e.g. '/myfolder/'
+        const scope = row.scope.replace(/\/$/, '')
+        const ipath = row.item_path.replace(/\/$/, '')
+        // What admin sees: scope + item_path  e.g. '/alice/myfolder'
+        hiddenPaths.add((scope + ipath).replace(/\/$/, '') || '/')
+        // Also store raw item_path in case admin scope is '/'
+        hiddenPaths.add(ipath)
+      }
+
+      info.items = info.items.filter(item => {
+        const normalised = item.path.replace(/\/$/, '')
+        return !hiddenPaths.has(normalised)
+      })
+    }
+
     // If asking for text content as raw bytes
     if (wantsEncoding && !stat.isDirectory()) {
       if (!req.user.perm.download) return res.status(202).end();
@@ -191,6 +220,10 @@ router.delete('/*', requireAuth, async (req, res) => {
     const db = require('../db').getDb();
     db.prepare('DELETE FROM shares WHERE path LIKE ?').run(urlPath + '%');
 
+    // Remove associated global folders
+    db.prepare('DELETE FROM global_folders WHERE folder_path = ? OR folder_path LIKE ?')
+      .run(urlPath, urlPath + '/%');
+
     await fse.remove(absPath);
     return res.status(204).end();
   } catch (err) {
@@ -239,6 +272,21 @@ router.patch('/*', requireAuth, async (req, res) => {
       }
       if (rename) dstAbs = addVersionSuffix(dstAbs);
       await movePath(srcAbs, dstAbs);
+
+      // Update global folders paths in DB
+      const db = require('../db').getDb();
+      const rows = db.prepare('SELECT id, folder_path FROM global_folders').all();
+      for (const row of rows) {
+        if (row.folder_path === urlPath) {
+          db.prepare('UPDATE global_folders SET folder_path = ? WHERE id = ?')
+            .run(dstUrlPath, row.id);
+        } else if (row.folder_path.startsWith(urlPath + '/')) {
+          const remaining = row.folder_path.slice(urlPath.length);
+          const newPath = dstUrlPath + remaining;
+          db.prepare('UPDATE global_folders SET folder_path = ? WHERE id = ?')
+            .run(newPath, row.id);
+        }
+      }
     } else {
       return res.status(400).json({ error: `Unknown action: ${action}` });
     }

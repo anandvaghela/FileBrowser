@@ -22,6 +22,44 @@ router.get('/*', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'query parameter required' });
   }
 
+  // Get other users' scopes to filter search results and avoid searching other users' folders
+  let otherScopes = [];
+  let globalFolders = [];
+  try {
+    const { getDb } = require('../db');
+    const db = getDb();
+    
+    const otherUsers = db.prepare('SELECT scope FROM users WHERE id != ?').all(req.user.id);
+    otherScopes = otherUsers.map(u => {
+      let p = (u.scope || '').replace(/\\/g, '/').replace(/\/+/g, '/');
+      if (!p.startsWith('/')) p = '/' + p;
+      if (p.endsWith('/') && p !== '/') p = p.slice(0, -1);
+      return p;
+    }).filter(p => p !== '/' && p !== '');
+
+    const globals = db.prepare('SELECT folder_path FROM global_folders').all();
+    globalFolders = globals.map(f => {
+      let p = (f.folder_path || '').replace(/\\/g, '/').replace(/\/+/g, '/');
+      if (!p.startsWith('/')) p = '/' + p;
+      if (p.endsWith('/') && p !== '/') p = p.slice(0, -1);
+      return p;
+    });
+  } catch (err) {
+    console.error('Failed to fetch scopes/global-folders:', err);
+  }
+
+  function isOtherUserScope(urlPath) {
+    const cleanUrl = urlPath.replace(/\\/g, '/').replace(/\/+/g, '/');
+    
+    // Global folders are public and searchable by design, bypass check
+    const isGlobal = globalFolders.some(g => cleanUrl === g || cleanUrl.startsWith(g + '/'));
+    if (isGlobal) return false;
+
+    return otherScopes.some(scope => {
+      return cleanUrl === scope || cleanUrl.startsWith(scope + '/');
+    });
+  }
+
   let absRoot;
   try {
     absRoot = resolvePath(req.user.scope, urlPath);
@@ -106,6 +144,10 @@ router.get('/*', requireAuth, async (req, res) => {
 
       const childAbs = path.join(absDir, name);
       const childUrl = (urlDir === '/' ? '' : urlDir) + '/' + name;
+
+      if (isOtherUserScope(childUrl)) {
+        continue;
+      }
 
       let stat;
       try {

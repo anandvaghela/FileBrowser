@@ -27,8 +27,30 @@ router.get('/:size/*', requireAuth, async (req, res) => {
 
   const urlPath = '/' + (req.params[0] || '');
 
+  const { getDb } = require('../db');
+
+  function getShareAccess(db, userId, itemPath) {
+    const normalised = itemPath.replace(/\/$/, '');
+    const row = db.prepare(`
+      SELECT us.can_write, us.owner_id, u.scope
+      FROM user_shares us
+      JOIN users u ON u.id = us.owner_id
+      WHERE us.shared_with = ?
+        AND (us.item_path = ? OR us.item_path = ? OR ? LIKE (us.item_path || '%'))
+      ORDER BY LENGTH(us.item_path) DESC
+      LIMIT 1
+    `).get(userId, normalised, normalised + '/', normalised);
+    return row || null;
+  }
+
   try {
-    const absPath = resolvePath(req.user.scope, urlPath);
+    const db = getDb();
+    let scopeToUse = req.user.scope;
+    const access = getShareAccess(db, req.user.id, urlPath);
+    if (access) {
+      scopeToUse = access.scope;
+    }
+    const absPath = resolvePath(scopeToUse, urlPath);
     const stat = statSafe(absPath);
     if (!stat || stat.isDirectory()) return res.status(404).json({ error: 'File not found' });
 
@@ -39,7 +61,7 @@ router.get('/:size/*', requireAuth, async (req, res) => {
       return res.status(415).json({ error: 'Not a previewable file' });
     }
 
-    const key = cacheKey(req.user.id, req.user.scope, urlPath, sizeLabel);
+    const key = cacheKey(req.user.id, scopeToUse, urlPath, sizeLabel);
     const cachePath = path.join(CACHE_DIR, key + '.jpg');
 
     if (fs.existsSync(cachePath)) {

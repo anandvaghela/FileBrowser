@@ -56,10 +56,57 @@ router.post('/signup', async (req, res) => {
   }
 
   const hash = await bcrypt.hash(password, 10);
+  const branding = JSON.parse(settings.branding || '{}');
+  const defaultPerm = branding.defaultPerm || {
+    admin: false, execute: false, create: true,
+    rename: true, modify: true, delete: true, share: true, download: true,
+  };
+  const userHomeBase = settings.user_home_base || '/users';
+  const createUserDir = !!settings.create_user_dir;
+
+  // Resolve scope: replace {username} placeholder, or default to userHomeBase + username if empty/invalid
+  let finalScope = branding.defaultScope;
+  if (!finalScope || finalScope === '.' || finalScope === '/') {
+    finalScope = `${userHomeBase}/${username}`.replace(/\/+/g, '/');
+  } else {
+    finalScope = finalScope.replace('{username}', username);
+  }
+  if (!finalScope.startsWith('/')) {
+    finalScope = '/' + finalScope;
+  }
+
+  // Create directory if setting is enabled
+  if (createUserDir) {
+    const fs = require('fs');
+    const path = require('path');
+    const { FILES_ROOT } = require('../services/fileSystem');
+    const dirAbs = path.resolve(FILES_ROOT, finalScope.replace(/^\//, ''));
+    if (!fs.existsSync(dirAbs)) {
+      fs.mkdirSync(dirAbs, { recursive: true });
+    }
+  }
+
   db.prepare(`
-    INSERT INTO users (username, password, scope, perm_admin, perm_execute, commands)
-    VALUES (?, ?, ?, 0, 0, '[]')
-  `).run(username, hash, `/${username}`);
+    INSERT INTO users
+      (username, password, scope, locale, view_mode,
+       perm_admin, perm_execute, perm_create, perm_rename,
+       perm_modify, perm_delete, perm_share, perm_download, commands)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    username, hash,
+    finalScope,
+    branding.defaultLanguage || 'en',
+    'mosaic',
+    defaultPerm.admin ? 1 : 0,
+    defaultPerm.execute ? 1 : 0,
+    defaultPerm.create !== false ? 1 : 0,
+    defaultPerm.rename !== false ? 1 : 0,
+    defaultPerm.modify !== false ? 1 : 0,
+    defaultPerm.delete !== false ? 1 : 0,
+    defaultPerm.share !== false ? 1 : 0,
+    defaultPerm.download !== false ? 1 : 0,
+    JSON.stringify(branding.defaultCommands || []),
+  );
 
   return res.status(200).json({ message: 'User created' });
 });

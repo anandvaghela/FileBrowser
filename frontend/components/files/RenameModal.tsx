@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { X, Edit2, FolderPlus, AlertTriangle } from 'lucide-react'
-import { resourcesApi } from '@/lib/api'
+import { resourcesApi, api, sharedResourcesApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
@@ -65,19 +65,38 @@ export function RenameModal({ file, currentPath, onClose, onDone }: {
 export default RenameModal
 
 // ── New Folder ─────────────────────────────────────────────────────────────────
-export function NewFolderModal({ currentPath, onClose, onDone }: {
-  currentPath: string; onClose: () => void; onDone: () => void
+export function NewFolderModal({ currentPath, onClose, onDone, user, isSharedContext, sharedCanWrite }: {
+  currentPath: string; onClose: () => void; onDone: () => void; user?: any; isSharedContext?: boolean; sharedCanWrite?: boolean
 }) {
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
+  const [makeGlobal, setMakeGlobal] = useState(false)
+  const [showToAdmin, setShowToAdmin] = useState(false)
+  const isAdmin = user?.perm?.admin
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
+    if (isSharedContext && !sharedCanWrite) {
+      toast.error('You have read-only access to this folder')
+      return
+    }
     setLoading(true)
     try {
       const dir = currentPath === '/' ? `/${name.trim()}/` : `${currentPath}/${name.trim()}/`
-      await resourcesApi.createDir(dir)
+
+      if (isSharedContext) {
+        await sharedResourcesApi.createDir(dir)
+      } else {
+        await resourcesApi.createDir(dir)
+        if (isAdmin && makeGlobal) {
+          await api.post('/global-folders', { folder_path: dir })
+        }
+        if (!isAdmin) {
+          await api.post('/user-items', { item_path: dir, show_to_admin: showToAdmin })
+        }
+      }
+
       toast.success('Folder created')
       onDone()
     } catch (err: any) {
@@ -104,6 +123,28 @@ export function NewFolderModal({ currentPath, onClose, onDone }: {
             onChange={e => setName(e.target.value)}
             autoFocus
           />
+          {isAdmin && (
+            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={makeGlobal}
+                onChange={e => setMakeGlobal(e.target.checked)}
+                className="w-4 h-4 text-primary-500 rounded focus:ring-2 focus:ring-primary-200"
+              />
+              <span>Make this folder global (visible to all users)</span>
+            </label>
+          )}
+          {!isAdmin && (
+            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showToAdmin}
+                onChange={e => setShowToAdmin(e.target.checked)}
+                className="w-4 h-4 text-primary-500 rounded focus:ring-2 focus:ring-primary-200"
+              />
+              <span>Show to admin</span>
+            </label>
+          )}
           <div className="flex gap-3">
             <Button type="button" variant="outline" onClick={onClose} className="flex-1">
               Cancel

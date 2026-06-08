@@ -16,8 +16,14 @@ function extractToken(req) {
   if (req.headers['x-auth']) {
     return req.headers['x-auth'];
   }
+  if (req.cookies && req.cookies.fb_token) {
+    return req.cookies.fb_token;
+  }
   if (req.cookies && req.cookies.auth) {
     return req.cookies.auth;
+  }
+  if (req.query && req.query.token) {
+    return req.query.token;
   }
   return null;
 }

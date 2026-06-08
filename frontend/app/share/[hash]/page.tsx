@@ -2,10 +2,22 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Download, FolderOpen, File, Lock, Eye, EyeOff, Image, Film, Music, FileText } from 'lucide-react'
-import { sharesApi, formatBytes } from '@/lib/api'
+import axios from 'axios'
+import { formatBytes } from '@/lib/api'
 import { formatDistanceToNow } from 'date-fns'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
+
+// Separate public axios instance — no auth interceptor so 401 won't trigger logout
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+const publicApi = axios.create({ baseURL: `${API_URL}/api`, timeout: 30000 })
+
+const publicSharesApi = {
+  getPublic: (hash: string, password?: string) =>
+    publicApi.get(`/public/share/${hash}`, { params: password ? { password } : {} }),
+  downloadUrl: (hash: string, password?: string) =>
+    `${API_URL}/api/public/dl/${hash}${password ? `?password=${encodeURIComponent(password)}` : ''}`,
+}
 
 function FileIcon({ file }: { file: any }) {
   if (file.isDir) return <FolderOpen className="w-4 h-4 text-primary-500" />
@@ -29,7 +41,7 @@ export default function SharePage() {
   const load = async (pwd?: string) => {
     setState('loading')
     try {
-      const res = await sharesApi.getPublic(hash, pwd)
+      const res = await publicSharesApi.getPublic(hash, pwd)
       setInfo(res.data)
       setState('ready')
     } catch (err: any) {
@@ -45,7 +57,7 @@ export default function SharePage() {
   useEffect(() => { load() }, [hash])
 
   const download = () => {
-    const url = sharesApi.downloadUrl(hash, password || undefined)
+    const url = publicSharesApi.downloadUrl(hash, password || undefined)
     const a = document.createElement('a')
     a.href = url
     a.click()

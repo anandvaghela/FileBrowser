@@ -1,7 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { X, Download, Trash2, Share2, Edit2, ZoomIn, ZoomOut, RotateCcw, ExternalLink } from 'lucide-react'
-import { rawUrl, previewUrl, formatBytes } from '@/lib/api'
+import { X, Download, Trash2, Share2, Edit2, ZoomIn, ZoomOut, RotateCcw, ExternalLink, Save } from 'lucide-react'
+import { clsx } from 'clsx'
+import { rawUrl, previewUrl, formatBytes, resourcesApi, getUser } from '@/lib/api'
+import toast from 'react-hot-toast'
 import { formatDistanceToNow } from 'date-fns'
 import Button from '@/components/ui/Button'
 
@@ -16,8 +18,29 @@ export default function FilePreviewModal({
   onRename?: () => void
 }) {
   const [textContent, setTextContent] = useState<string | null>(null)
+  const [originalContent, setOriginalContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [zoom, setZoom] = useState(1)
+  const [saving, setSaving] = useState(false)
+  const [user, setUser] = useState<any>(null)
+
+  useEffect(() => {
+    setUser(getUser())
+  }, [])
+
+  const handleSave = async () => {
+    if (textContent === null) return
+    setSaving(true)
+    try {
+      await resourcesApi.updateFile(file.path, textContent)
+      toast.success('File saved successfully')
+      setOriginalContent(textContent)
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to save file')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('fb_token') : ''
   const isImage = file.type === 'image'
@@ -31,8 +54,14 @@ export default function FilePreviewModal({
       setLoading(true)
       fetch(rawUrl(file.path), { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.text())
-        .then(t => setTextContent(t))
-        .catch(() => setTextContent('Failed to load file content.'))
+        .then(t => {
+          setTextContent(t)
+          setOriginalContent(t)
+        })
+        .catch(() => {
+          setTextContent('Failed to load file content.')
+          setOriginalContent('Failed to load file content.')
+        })
         .finally(() => setLoading(false))
     }
   }, [file.path, isText, token])
@@ -64,6 +93,17 @@ export default function FilePreviewModal({
                   <RotateCcw className="w-4 h-4" />
                 </button>
               </>
+            )}
+            {isText && user?.perm?.modify && textContent !== originalContent && textContent !== null && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="p-1.5 rounded-lg hover:bg-green-50 text-green-500 hover:text-green-600 transition-all focus:outline-none border border-green-200 bg-green-50/50 flex items-center gap-1 px-2.5 animate-pulse"
+                title="Save Changes"
+              >
+                <Save className="w-4 h-4" />
+                <span className="text-xs font-semibold">Save</span>
+              </button>
             )}
             {onShare && (
               <button onClick={onShare} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
@@ -145,13 +185,20 @@ export default function FilePreviewModal({
           )}
 
           {isText && (
-            <div className="w-full h-full p-4">
+            <div className="w-full h-full p-4 flex flex-col min-h-[350px]">
               {loading ? (
                 <div className="flex items-center justify-center h-48">
                   <div className="w-6 h-6 border-2 border-primary-200 border-t-primary-500 rounded-full animate-spin" />
                 </div>
+              ) : user?.perm?.modify ? (
+                <textarea
+                  value={textContent || ''}
+                  onChange={e => setTextContent(e.target.value)}
+                  className="w-full flex-1 min-h-[300px] bg-white rounded-lg border border-[#e8eaed] p-4 text-xs text-gray-700 font-mono leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 resize-y text-left"
+                  autoFocus
+                />
               ) : (
-                <pre className="bg-white rounded-lg border border-[#e8eaed] p-4 text-xs text-gray-700 overflow-auto max-h-[60vh] font-mono leading-relaxed whitespace-pre-wrap break-words">
+                <pre className="bg-white rounded-lg border border-[#e8eaed] p-4 text-xs text-gray-700 overflow-auto max-h-[60vh] font-mono leading-relaxed whitespace-pre-wrap break-words text-left w-full">
                   {textContent}
                 </pre>
               )}

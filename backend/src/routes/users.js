@@ -7,16 +7,16 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/users — admin: list all
-router.get('/', requireAdmin, (req, res) => {
+// GET /api/users — admin: list all, authenticated users: list usernames only (for sharing)
+router.get('/', requireAuth, (req, res) => {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM users ORDER BY id ASC').all();
-  const users = rows.map(r => {
-    const u = dbUserToJson(r);
-    delete u._raw;
-    return u;
-  });
-  return res.json(users);
+  if (req.user.perm.admin) {
+    const rows = db.prepare('SELECT * FROM users ORDER BY id ASC').all();
+    return res.json(rows.map(r => { const u = dbUserToJson(r); delete u._raw; return u; }));
+  }
+  // Non-admins get only id + username (for sharing UI), excluding themselves
+  const rows = db.prepare('SELECT id, username FROM users WHERE id != ? ORDER BY username ASC').all(req.user.id);
+  return res.json(rows);
 });
 
 // GET /api/users/:id — self or admin
@@ -46,8 +46,10 @@ router.post('/', requireAdmin, async (req, res) => {
   }
 
   const db = getDb();
-  const settings = db.prepare('SELECT min_pwd_length FROM settings WHERE id = 1').get();
+  const settings = db.prepare('SELECT * FROM settings WHERE id = 1').get();
   const minLen = settings?.min_pwd_length || 8;
+  const userHomeBase = settings?.user_home_base || '/users';
+  const createUserDir = !!settings?.create_user_dir;
 
   if (password.length < minLen) {
     return res.status(400).json({ error: `Password must be at least ${minLen} characters` });
@@ -60,6 +62,28 @@ router.post('/', requireAdmin, async (req, res) => {
 
   const hash = await bcrypt.hash(password, 10);
 
+  // Resolve scope: replace {username} placeholder, or default to userHomeBase + username if empty/invalid
+  let finalScope = scope;
+  if (!finalScope || finalScope === '.' || finalScope === '/') {
+    finalScope = `${userHomeBase}/${username}`.replace(/\/+/g, '/');
+  } else {
+    finalScope = finalScope.replace('{username}', username);
+  }
+  if (!finalScope.startsWith('/')) {
+    finalScope = '/' + finalScope;
+  }
+
+  // Create directory if setting is enabled
+  if (createUserDir) {
+    const fs = require('fs');
+    const path = require('path');
+    const { FILES_ROOT } = require('../services/fileSystem');
+    const dirAbs = path.resolve(FILES_ROOT, finalScope.replace(/^\//, ''));
+    if (!fs.existsSync(dirAbs)) {
+      fs.mkdirSync(dirAbs, { recursive: true });
+    }
+  }
+
   const p = perm || {};
   db.prepare(`
     INSERT INTO users
@@ -69,7 +93,7 @@ router.post('/', requireAdmin, async (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     username, hash,
-    scope || `/${username}`,
+    finalScope,
     locale || 'en',
     viewMode || 'mosaic',
     p.admin ? 1 : 0,

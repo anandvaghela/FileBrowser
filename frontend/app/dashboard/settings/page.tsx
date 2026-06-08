@@ -22,14 +22,17 @@ const DEFAULT_PERM = {
 }
 
 // ─── USER MODAL (for User Management) ─────────────────────────────────────────
-function UserModal({ user, onClose, onDone }: { user?: any; onClose: () => void; onDone: () => void }) {
+function UserModal({ user, globalSettings, onClose, onDone }: { user?: any; globalSettings?: any; onClose: () => void; onDone: () => void }) {
   const isEdit = !!user
+  const branding = globalSettings?.branding || {}
+  const resolvedDefaultPerm = branding.defaultPerm || DEFAULT_PERM
+
   const [form, setForm] = useState({
     username: user?.username || '',
     password: '',
-    scope: user?.scope || '/',
-    locale: user?.locale || 'en',
-    perm: user?.perm || DEFAULT_PERM,
+    scope: user?.scope || branding.defaultScope || '/',
+    locale: user?.locale || branding.defaultLanguage || 'en',
+    perm: user?.perm || resolvedDefaultPerm,
     lockPassword: user?.lockPassword || false,
   })
   const [showPass, setShowPass] = useState(false)
@@ -766,7 +769,7 @@ export default function SettingsPage() {
               </div>
             ) : (
               <div className="space-y-5">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Input
                     label="Scope"
                     variant="grey"
@@ -933,6 +936,7 @@ export default function SettingsPage() {
       {showUserModal && (
         <UserModal
           user={modalUser}
+          globalSettings={globalSettings}
           onClose={() => setShowUserModal(false)}
           onDone={() => { setShowUserModal(false); loadUsers() }}
         />

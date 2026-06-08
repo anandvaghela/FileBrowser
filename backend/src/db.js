@@ -75,6 +75,32 @@ function initSchema() {
       hide_dotfiles   INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS global_folders (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      folder_path TEXT    NOT NULL UNIQUE,
+      created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS user_items (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      item_path   TEXT    NOT NULL,
+      show_to_admin INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(user_id, item_path)
+    );
+
+    CREATE TABLE IF NOT EXISTS user_shares (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_path   TEXT    NOT NULL,
+      owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      shared_with INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      can_write   INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(item_path, owner_id, shared_with)
+    );
+
     CREATE TABLE IF NOT EXISTS tus_uploads (
       upload_id   TEXT    PRIMARY KEY,
       file_path   TEXT    NOT NULL,

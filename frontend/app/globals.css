@@ -20,7 +20,7 @@
 
   html {
     font-family: var(--base-fm);
-    font-size: 16px;
+    font-size: 17.6px; /* Increased by 10% to match 110% zoom style */
   }
 
   body {
@@ -30,7 +30,7 @@
     background: #ffffff;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-size: 15px;
+    font-size: 16.5px; /* Increased by 10% */
     line-height: 1.5;
   }
 
@@ -45,4 +45,15 @@
   .animation-delay-400 { animation-delay: 400ms; }
   .animation-delay-2000 { animation-delay: 2s; }
   .animation-delay-4000 { animation-delay: 4s; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Login page responsive */
+@media (max-width: 1023px) {
+  .leftside-panel { display: none !important; }
+  .rightside-panel { width: 100% !important; }
 }

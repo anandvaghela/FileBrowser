@@ -131,6 +131,36 @@ export const usersApi = {
     api.delete(`/users/${id}`, { data: { currentPassword } }),
 }
 
+// ── User Shares ──────────────────────────────────────────────────────────────
+export const userSharesApi = {
+  getForItem: (item_path: string) => api.get('/user-shares', { params: { item_path } }),
+  share: (item_path: string, user_ids: number[], can_write = false) =>
+    api.post('/user-shares', { item_path, user_ids, can_write }),
+  remove: (item_path: string, shared_with: number) =>
+    api.delete('/user-shares', { data: { item_path, shared_with } }),
+  sharedWithMe: () => api.get('/user-shares/shared-with-me'),
+}
+
+// ── Shared Resources ───────────────────────────────────────────────────────────
+export const sharedResourcesApi = {
+  get: (path: string) => api.get(`/shared-resources${path}`),
+  uploadFile: (path: string, file: File, onProgress?: (p: number) => void) => {
+    const form = new FormData()
+    form.append('file', file)
+    return api.post(`/shared-resources${path}`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded * 100) / e.total))
+      },
+    })
+  },
+  createDir: (path: string) =>
+    api.post(`/shared-resources${path.endsWith('/') ? path : path + '/'}`),
+  delete: (path: string) => api.delete(`/shared-resources${path}`),
+  rename: (src: string, dst: string) =>
+    api.patch(`/shared-resources${src}`, null, { params: { action: 'rename', destination: dst } }),
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const settingsApi = {
   get: () => api.get('/settings'),

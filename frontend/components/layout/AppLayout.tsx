@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   FolderOpen, Settings, LogOut, Menu, X,
-  FolderPlus, FilePlus, Search
+  FolderPlus, FilePlus, Search, Users
 } from 'lucide-react'
 import { clearAuth, getUser, usageApi, formatBytes } from '@/lib/api'
 import { clsx } from 'clsx'
@@ -22,7 +22,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     const u = getUser()
     if (!u) { router.replace('/login'); return }
     setUser(u)
-    usageApi.get('/').then(r => setUsage(r.data)).catch(() => {})
+    usageApi.get('/').then(r => setUsage(r.data)).catch(() => { })
   }, [router])
 
   useEffect(() => {
@@ -30,6 +30,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     window.addEventListener('toggle-sidebar', handleToggle)
     return () => window.removeEventListener('toggle-sidebar', handleToggle)
   }, [])
+
+  useEffect(() => {
+    if (pathname !== '/dashboard/files') {
+      setSearchVal('')
+      if (typeof window !== 'undefined') {
+        ;(window as any).__searchQuery = ''
+      }
+    }
+  }, [pathname])
+
+  const handleSearchChange = (val: string) => {
+    setSearchVal(val)
+    if (typeof window !== 'undefined') {
+      ;(window as any).__searchQuery = val
+      window.dispatchEvent(new CustomEvent('global-search', { detail: val }))
+    }
+    if (pathname !== '/dashboard/files') {
+      router.push('/dashboard/files')
+    }
+  }
 
   const logout = () => {
     clearAuth()
@@ -47,10 +67,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   const isFilesPage = pathname === '/dashboard/files'
+  const isSharedPage = pathname === '/dashboard/shared'
   const isSettingsPage = pathname.startsWith('/dashboard/settings')
 
   const navItems = [
     { label: 'My Files', icon: FolderOpen, href: '/dashboard/files', active: isFilesPage },
+    { label: 'Shared', icon: Users, href: '/dashboard/shared', active: isSharedPage },
     { label: 'New Folder', icon: FolderPlus, action: 'new-folder' },
     { label: 'New File', icon: FilePlus, action: 'upload' },
     { label: 'Settings', icon: Settings, href: '/dashboard/settings', active: isSettingsPage },
@@ -61,6 +83,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* ── TOP NAVBAR (full width, like UBverse) ── */}
       <header className="h-[64px] bg-white border-b border-[#f0f0f0] flex items-center px-6 gap-4 flex-shrink-0 z-50">
+        {/* Mobile menu toggle */}
+        <button onClick={() => setSideOpen(true)} className="lg:hidden text-[#555555] hover:text-[#333333] focus:outline-none flex-shrink-0">
+          <Menu className="w-5 h-5" />
+        </button>
+
         {/* Logo */}
         <div className="flex items-center gap-2 flex-shrink-0">
           <img
@@ -71,27 +98,36 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Search bar */}
-        <div className="relative w-[320px] flex-shrink-0">
+        <div className="relative flex-1 sm:flex-none sm:w-[240px] md:w-[320px] max-w-[320px]">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
           <input
             type="text"
             placeholder="Search..."
             value={searchVal}
-            onChange={e => setSearchVal(e.target.value)}
-            className="w-full px-4 py-2 text-[14px] bg-[#f1f3f4] border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#007aff]/20 transition-all text-[#333333] placeholder-[#7f7f7f]"
+            onChange={e => handleSearchChange(e.target.value)}
+            className="w-full pl-10 pr-8 py-2 text-[14px] bg-transparent border border-[#d9d9d9] rounded-lg focus:outline-none focus:border-[#007aff] transition-all text-[#333333] placeholder-[#b0b0b0]"
           />
+          {searchVal && (
+            <button
+              onClick={() => handleSearchChange('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Mobile menu toggle */}
-        <button onClick={() => setSideOpen(true)} className="lg:hidden text-[#555555] hover:text-[#333333] focus:outline-none">
-          <Menu className="w-5 h-5" />
-        </button>
-
-        {/* User avatar */}
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#007aff] via-indigo-500 to-purple-600 flex items-center justify-center text-white text-[15px] font-bold flex-shrink-0 cursor-pointer">
-          {user?.username?.[0]?.toUpperCase() || 'U'}
+        {/* User avatar & username */}
+        <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-[#f1f3f4] hover:bg-[#e8eaed] transition-colors cursor-pointer flex-shrink-0">
+          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#007aff] via-indigo-500 to-purple-600 flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0">
+            {user?.username?.[0]?.toUpperCase() || 'U'}
+          </div>
+          <span className="text-[14px] font-semibold text-[#333333] pr-1">
+            {user?.username || 'User'}
+          </span>
         </div>
       </header>
 

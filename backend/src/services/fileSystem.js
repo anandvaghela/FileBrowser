@@ -19,12 +19,50 @@ fse.ensureDirSync(FILES_ROOT);
  * @param {string} urlPath    - path from the URL
  * @returns {string} absolute resolved path
  */
-function resolvePath(userScope, urlPath) {
-  // Normalise scope: strip leading slash, join with FILES_ROOT
-  const scopeAbs = path.resolve(FILES_ROOT, userScope.replace(/^\//, ''));
+function getCleanUrlPath(urlPath) {
+  let p = (urlPath || '').replace(/\\/g, '/');
+  p = p.replace(/\/+/g, '/');
+  if (!p.startsWith('/')) {
+    p = '/' + p;
+  }
+  return p;
+}
 
-  // Normalise urlPath
-  const clean = path.normalize('/' + (urlPath || '')).replace(/\\/g, '/');
+function checkIsGlobal(urlPath) {
+  try {
+    const { getDb } = require('../db');
+    const db = getDb();
+    const globalFolders = db.prepare('SELECT folder_path FROM global_folders').all();
+    const clean = getCleanUrlPath(urlPath);
+    return globalFolders.some(f => {
+      const gPath = getCleanUrlPath(f.folder_path);
+      return clean === gPath || clean.startsWith(gPath + '/');
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
+function resolvePath(userScope, urlPath) {
+  let scopeToUse = userScope;
+  if (checkIsGlobal(urlPath)) {
+    scopeToUse = '/';
+  }
+  const clean = getCleanUrlPath(urlPath);
+
+  // Normalise scope: strip leading slash, join with FILES_ROOT
+  const scopeAbs = path.resolve(FILES_ROOT, scopeToUse.replace(/^\//, ''));
+
+  // Ensure user's scope directory exists on disk to prevent 404 errors
+  if (!fs.existsSync(scopeAbs)) {
+    try {
+      fs.mkdirSync(scopeAbs, { recursive: true });
+    } catch (e) {
+      console.error(`Failed to create scope directory ${scopeAbs}:`, e);
+    }
+  }
+
+  // Normalise urlPath relative to the scope
   const target = path.resolve(scopeAbs, '.' + clean);
 
   // Security: ensure target is inside the scope
@@ -65,6 +103,7 @@ function buildFileInfo(absPath, urlPath, options = {}) {
     isSymlink: stat.isSymbolicLink(),
     type: getFileType(mimeType, stat.isDirectory()),
     mimeType,
+    isGlobal: checkIsGlobal(urlPath),
   };
 
   if (stat.isDirectory() && options.expand) {
@@ -111,6 +150,7 @@ function listDir(absPath, urlPathPrefix) {
         isSymlink: false,
         type: getFileType(mimeType, stat.isDirectory()),
         mimeType,
+        isGlobal: checkIsGlobal(childUrl),
       };
     } catch {
       return null;

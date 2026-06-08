@@ -21,6 +21,10 @@ const previewRoutes = require('./routes/preview');
 const settingsRoutes = require('./routes/settings');
 const usageRoutes = require('./routes/usage');
 const tusRoutes = require('./routes/tus');
+const globalFoldersRoutes = require('./routes/globalFolders');
+const userItemsRoutes = require('./routes/userItems');
+const userSharesRoutes = require('./routes/userShares');
+const sharedResourcesRoutes = require('./routes/sharedResources');
 
 const { getDb } = require('./db');
 
@@ -92,6 +96,18 @@ app.use(`${api}/usage`, usageRoutes);
 
 // TUS resumable uploads
 app.use(`${api}/tus`, tusRoutes);
+
+// Global folders
+app.use(`${api}/global-folders`, globalFoldersRoutes);
+
+// User items visibility
+app.use(`${api}/user-items`, userItemsRoutes);
+
+// User-to-user shares
+app.use(`${api}/user-shares`, userSharesRoutes);
+
+// Shared resources (user B accessing user A's files)
+app.use(`${api}/shared-resources`, sharedResourcesRoutes);
 
 // ── 404 / Error handlers ──────────────────────────────────────────────────────
 app.use((req, res) => {
