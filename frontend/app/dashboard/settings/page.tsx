@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Settings, Save, Shield, Users, Eye, EyeOff, Plus, Edit2,
@@ -145,7 +145,7 @@ function UserModal({ user, globalSettings, onClose, onDone }: { user?: any; glob
 }
 
 // ─── TABS & CONTROLLER ────────────────────────────────────────────────────────
-export default function SettingsPage() {
+function SettingsPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const tabParam = searchParams.get('tab')
@@ -1099,5 +1099,17 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <RefreshCw className="w-6 h-6 animate-spin text-primary-500" />
+      </div>
+    }>
+      <SettingsPageContent />
+    </Suspense>
   )
 }

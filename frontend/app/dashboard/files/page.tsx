@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -57,7 +57,7 @@ function BgIcon({ file }: { file: any }) {
   return 'bg-gray-50'
 }
 
-export default function FilesPage() {
+function FilesPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [currentPath, setCurrentPath] = useState(searchParams.get('path') || '/')
@@ -1145,5 +1145,17 @@ export default function FilesPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function FilesPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-[50vh]">
+        <RefreshCw className="w-6 h-6 animate-spin text-primary-500" />
+      </div>
+    }>
+      <FilesPageContent />
+    </Suspense>
   )
 }
