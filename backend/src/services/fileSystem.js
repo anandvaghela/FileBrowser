@@ -51,6 +51,20 @@ async function checkIsGlobal(urlPath) {
   }
 }
 
+async function isExactGlobalFolder(urlPath) {
+  try {
+    const { GlobalFolder } = require('../db');
+    const clean = getCleanUrlPath(urlPath);
+    const globalFolders = await GlobalFolder.find();
+    return globalFolders.some(f => {
+      const gPath = getCleanUrlPath(f.folder_path);
+      return clean === gPath;
+    });
+  } catch (e) {
+    return false;
+  }
+}
+
 async function resolvePath(userScope, urlPath) {
   let scopeToUse = userScope;
   if (await checkIsGlobal(urlPath)) {
@@ -162,7 +176,7 @@ async function buildFileInfo(key, urlPath, options = {}) {
     isSymlink: false,
     type: getFileType(mimeType, isDir),
     mimeType,
-    isGlobal: await checkIsGlobal(urlPath),
+    isGlobal: await isExactGlobalFolder(urlPath),
   };
 
   if (isDir && options.expand) {
@@ -240,7 +254,7 @@ async function listDir(key, urlPathPrefix) {
 
     const items = [...folders, ...files];
     for (const item of items) {
-      item.isGlobal = await checkIsGlobal(item.path);
+      item.isGlobal = await isExactGlobalFolder(item.path);
     }
     return items;
   } catch (err) {
