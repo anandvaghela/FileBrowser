@@ -1,13 +1,12 @@
 'use strict';
 
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
-const fse = require('fs-extra');
 const multer = require('multer');
 const { requireAuth } = require('../middleware/auth');
-const { getDb } = require('../db');
-const { resolvePath, statSafe, buildFileInfo, walkDir } = require('../services/fileSystem');
+const { UserShare, User } = require('../db');
+const { s3, BUCKET_NAME, resolvePath, statSafe, buildFileInfo, movePath } = require('../services/fileSystem');
+const { PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const path = require('path');
 
 const router = express.Router();
 
@@ -17,35 +16,48 @@ const upload = multer({
 });
 
 // Helper: check if current user has access to item_path, returns { owner, can_write } or null
-function getShareAccess(db, userId, itemPath) {
-  // Strip trailing slash for matching
-  const normalised = itemPath.replace(/\/$/, '');
-  // Check direct share or parent folder share
-  const row = db.prepare(`
-    SELECT us.can_write, us.owner_id, u.scope
-    FROM user_shares us
-    JOIN users u ON u.id = us.owner_id
-    WHERE us.shared_with = ?
-      AND (us.item_path = ? OR us.item_path = ? OR ? LIKE (us.item_path || '%'))
-    ORDER BY LENGTH(us.item_path) DESC
-    LIMIT 1
-  `).get(userId, normalised, normalised + '/', normalised);
-  return row || null;
+async function getShareAccess(userId, itemPath) {
+  try {
+    const normalised = itemPath.replace(/\/$/, '');
+    const shares = await UserShare.find({ shared_with: userId });
+
+    let matchedShare = null;
+    for (const s of shares) {
+      const sPath = s.item_path.replace(/\/$/, '');
+      if (normalised === sPath || normalised.startsWith(sPath + '/')) {
+        if (!matchedShare || s.item_path.length > matchedShare.item_path.length) {
+          matchedShare = s;
+        }
+      }
+    }
+
+    if (!matchedShare) return null;
+
+    const owner = await User.findOne({ id: matchedShare.owner_id });
+    if (!owner) return null;
+
+    return {
+      can_write: matchedShare.can_write,
+      owner_id: matchedShare.owner_id,
+      scope: owner.scope
+    };
+  } catch (e) {
+    return null;
+  }
 }
 
 // GET /api/shared-resources/* — browse shared files
-router.get('/*', requireAuth, (req, res) => {
+router.get('/*', requireAuth, async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
-  const db = getDb();
-  const access = getShareAccess(db, req.user.id, urlPath);
+  const access = await getShareAccess(req.user.id, urlPath);
   if (!access) return res.status(403).json({ error: 'No access to this shared item' });
 
   try {
-    const absPath = resolvePath(access.scope, urlPath);
-    const stat = statSafe(absPath);
+    const absPath = await resolvePath(access.scope, urlPath);
+    const stat = await statSafe(absPath);
     if (!stat) return res.status(404).json({ error: 'Not found' });
 
-    const info = buildFileInfo(absPath, urlPath, {
+    const info = await buildFileInfo(absPath, urlPath, {
       expand: stat.isDirectory(),
       content: !stat.isDirectory(),
       sorting: {},
@@ -61,30 +73,42 @@ router.get('/*', requireAuth, (req, res) => {
 // POST /api/shared-resources/* — upload/create inside shared folder (needs can_write)
 router.post('/*', requireAuth, upload.single('file'), async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
-  const db = getDb();
-  const access = getShareAccess(db, req.user.id, urlPath);
+  const access = await getShareAccess(req.user.id, urlPath);
   if (!access) return res.status(403).json({ error: 'No access' });
   if (!access.can_write) return res.status(403).json({ error: 'Read-only access' });
 
   try {
-    const absPath = resolvePath(access.scope, urlPath);
+    const absPath = await resolvePath(access.scope, urlPath);
 
     if (urlPath.endsWith('/')) {
-      await fse.ensureDir(absPath);
+      // Create empty folder placeholder in S3
+      const s3Prefix = absPath.endsWith('/') ? absPath : absPath + '/';
+      await s3.send(new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: s3Prefix,
+        Body: ''
+      }));
       return res.status(200).json({ message: 'Directory created' });
     }
 
-    await fse.ensureDir(path.dirname(absPath));
     if (req.file) {
-      await fse.writeFile(absPath, req.file.buffer);
+      await s3.send(new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath,
+        Body: req.file.buffer
+      }));
     } else {
-      await new Promise((resolve, reject) => {
-        const out = fs.createWriteStream(absPath);
-        req.pipe(out);
-        out.on('finish', resolve);
-        out.on('error', reject);
-        req.on('error', reject);
+      // Stream raw body
+      const { Upload } = require('@aws-sdk/lib-storage');
+      const uploadStream = new Upload({
+        client: s3,
+        params: {
+          Bucket: BUCKET_NAME,
+          Key: absPath,
+          Body: req
+        }
       });
+      await uploadStream.done();
     }
     return res.status(200).json({ message: 'File uploaded' });
   } catch (err) {
@@ -96,15 +120,35 @@ router.post('/*', requireAuth, upload.single('file'), async (req, res) => {
 // DELETE /api/shared-resources/* — delete inside shared folder (needs can_write)
 router.delete('/*', requireAuth, async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
-  const db = getDb();
-  const access = getShareAccess(db, req.user.id, urlPath);
+  const access = await getShareAccess(req.user.id, urlPath);
   if (!access) return res.status(403).json({ error: 'No access' });
   if (!access.can_write) return res.status(403).json({ error: 'Read-only access' });
 
   try {
-    const absPath = resolvePath(access.scope, urlPath);
-    if (!fs.existsSync(absPath)) return res.status(404).json({ error: 'Not found' });
-    await fse.remove(absPath);
+    const absPath = await resolvePath(access.scope, urlPath);
+    const stat = await statSafe(absPath);
+    if (!stat) return res.status(404).json({ error: 'Not found' });
+
+    if (stat.isDirectory()) {
+      // List and delete recursively
+      const prefix = absPath.endsWith('/') ? absPath : absPath + '/';
+      const data = await s3.send(new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix
+      }));
+      for (const item of (data.Contents || [])) {
+        await s3.send(new DeleteObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: item.Key
+        }));
+      }
+    } else {
+      await s3.send(new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath
+      }));
+    }
+
     return res.status(204).end();
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
@@ -119,16 +163,17 @@ router.patch('/*', requireAuth, async (req, res) => {
   if (!destination) return res.status(400).json({ error: 'destination required' });
 
   const dstUrlPath = '/' + decodeURIComponent(destination).replace(/^\//, '');
-  const db = getDb();
-  const access = getShareAccess(db, req.user.id, urlPath);
+  const access = await getShareAccess(req.user.id, urlPath);
   if (!access) return res.status(403).json({ error: 'No access' });
   if (!access.can_write) return res.status(403).json({ error: 'Read-only access' });
 
   try {
-    const srcAbs = resolvePath(access.scope, urlPath);
-    const dstAbs = resolvePath(access.scope, dstUrlPath);
-    if (!fs.existsSync(srcAbs)) return res.status(404).json({ error: 'Source not found' });
-    await fse.move(srcAbs, dstAbs, { overwrite: true });
+    const srcAbs = await resolvePath(access.scope, urlPath);
+    const dstAbs = await resolvePath(access.scope, dstUrlPath);
+    const stat = await statSafe(srcAbs);
+    if (!stat) return res.status(404).json({ error: 'Source not found' });
+
+    await movePath(srcAbs, dstAbs);
     return res.status(200).json({ message: 'Done' });
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });

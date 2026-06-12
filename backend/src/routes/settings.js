@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { getDb } = require('../db');
+const { Settings } = require('../db');
 const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -23,45 +23,39 @@ function rowToSettings(row) {
 }
 
 // GET /api/settings — admin only
-router.get('/', requireAdmin, (req, res) => {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM settings WHERE id = 1').get();
-  return res.json(rowToSettings(row));
+router.get('/', requireAdmin, async (req, res) => {
+  try {
+    const row = await Settings.findOne({ id: 1 });
+    return res.json(rowToSettings(row));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // PUT /api/settings — admin only
-router.put('/', requireAdmin, (req, res) => {
+router.put('/', requireAdmin, async (req, res) => {
   const body = req.body;
-  const db = getDb();
+  try {
+    await Settings.updateOne({ id: 1 }, {
+      $set: {
+        signup: body.signup ? 1 : 0,
+        create_user_dir: body.createUserDir ? 1 : 0,
+        user_home_base: body.userHomeBasePath || '/users',
+        auth_method: body.authMethod || 'json',
+        branding: JSON.stringify(body.branding || {}),
+        commands: JSON.stringify(body.commands || {}),
+        shell: JSON.stringify(body.shell || []),
+        rules: JSON.stringify(body.rules || []),
+        min_pwd_length: body.minimumPasswordLength || 8,
+        hide_dotfiles: body.hideDotfiles ? 1 : 0,
+      }
+    }, { upsert: true });
 
-  db.prepare(`
-    UPDATE settings SET
-      signup          = ?,
-      create_user_dir = ?,
-      user_home_base  = ?,
-      auth_method     = ?,
-      branding        = ?,
-      commands        = ?,
-      shell           = ?,
-      rules           = ?,
-      min_pwd_length  = ?,
-      hide_dotfiles   = ?
-    WHERE id = 1
-  `).run(
-    body.signup ? 1 : 0,
-    body.createUserDir ? 1 : 0,
-    body.userHomeBasePath || '/users',
-    body.authMethod || 'json',
-    JSON.stringify(body.branding || {}),
-    JSON.stringify(body.commands || {}),
-    JSON.stringify(body.shell || []),
-    JSON.stringify(body.rules || []),
-    body.minimumPasswordLength || 8,
-    body.hideDotfiles ? 1 : 0,
-  );
-
-  const row = db.prepare('SELECT * FROM settings WHERE id = 1').get();
-  return res.json(rowToSettings(row));
+    const row = await Settings.findOne({ id: 1 });
+    return res.json(rowToSettings(row));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

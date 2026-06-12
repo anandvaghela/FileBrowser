@@ -1,69 +1,50 @@
 'use strict';
 
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const { requireAuth } = require('../middleware/auth');
-const { resolvePath, statSafe, FILES_ROOT } = require('../services/fileSystem');
+const { s3, BUCKET_NAME, resolvePath, statSafe } = require('../services/fileSystem');
+const { ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
 const router = express.Router();
 
-/**
- * Recursively calculate folder size.
- */
-function dirSize(absPath) {
-  let total = 0;
+async function getS3Usage(prefix) {
+  let totalSize = 0;
   try {
-    const entries = fs.readdirSync(absPath);
-    for (const e of entries) {
-      const child = path.join(absPath, e);
-      try {
-        const s = fs.statSync(child);
-        if (s.isDirectory()) total += dirSize(child);
-        else total += s.size;
-      } catch { /* skip */ }
-    }
-  } catch { /* skip */ }
-  return total;
-}
-
-/**
- * Get total disk usage for the underlying filesystem.
- * Falls back to a manual calculation if os-level stats fail.
- */
-function getDiskStats(absPath) {
-  try {
-    // Use statvfs via a child process on Linux/macOS
-    const { execSync } = require('child_process');
-    const out = execSync(`df -Pk "${absPath}" 2>/dev/null | tail -1`, { timeout: 3000 }).toString();
-    const parts = out.trim().split(/\s+/);
-    if (parts.length >= 4) {
-      const total = parseInt(parts[1]) * 1024;
-      const used = parseInt(parts[2]) * 1024;
-      return { total, used };
-    }
-  } catch { /* fall back */ }
-
-  // Fallback: report used bytes inside FILES_ROOT
-  const used = dirSize(FILES_ROOT);
-  return { total: 0, used };
+    let continuationToken = null;
+    const cleanPrefix = prefix ? (prefix.endsWith('/') ? prefix : prefix + '/') : '';
+    do {
+      const data = await s3.send(new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: cleanPrefix,
+        ContinuationToken: continuationToken
+      }));
+      for (const item of (data.Contents || [])) {
+        totalSize += item.Size || 0;
+      }
+      continuationToken = data.NextContinuationToken;
+    } while (continuationToken);
+  } catch (err) {
+    console.error('Failed to get usage from S3:', err);
+  }
+  return totalSize;
 }
 
 // GET /api/usage/*
-router.get('/*', requireAuth, (req, res) => {
+router.get('/*', requireAuth, async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
 
   try {
-    const absPath = resolvePath(req.user.scope, urlPath);
-    const stat = statSafe(absPath);
+    const absPath = await resolvePath(req.user.scope, urlPath);
+    const stat = await statSafe(absPath);
     if (!stat) return res.status(404).json({ error: 'Not found' });
 
     if (!stat.isDirectory()) {
       return res.json({ total: 0, used: 0 });
     }
 
-    const { total, used } = getDiskStats(absPath);
-    return res.json({ total, used });
+    const used = await getS3Usage(absPath);
+    // Report total = 0 (or limit, if applicable), and actual used bytes
+    return res.json({ total: 0, used });
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });

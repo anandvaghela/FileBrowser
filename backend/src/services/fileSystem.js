@@ -1,23 +1,32 @@
 'use strict';
 
 const path = require('path');
-const fs = require('fs');
-const fse = require('fs-extra');
 const mime = require('mime-types');
+const {
+  S3Client,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  CopyObjectCommand
+} = require('@aws-sdk/client-s3');
 require('dotenv').config();
 
-const FILES_ROOT = path.resolve(process.env.FILES_ROOT || './uploads');
+const BUCKET_NAME = process.env.S3_BUCKET_NAME || 'dummy-bucket';
 
-// Ensure root exists
-fse.ensureDirSync(FILES_ROOT);
+const s3 = new S3Client({
+  region: process.env.AWS_REGION || 'us-east-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'dummy',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'dummy'
+  }
+});
 
 /**
  * Resolve a user-supplied path to an absolute filesystem path,
  * confined to the user's scope directory.
- *
- * @param {string} userScope  - e.g. '/' or '/alice'
- * @param {string} urlPath    - path from the URL
- * @returns {string} absolute resolved path
+ * Under S3, this resolves to an S3 object key.
  */
 function getCleanUrlPath(urlPath) {
   let p = (urlPath || '').replace(/\\/g, '/');
@@ -28,12 +37,11 @@ function getCleanUrlPath(urlPath) {
   return p;
 }
 
-function checkIsGlobal(urlPath) {
+async function checkIsGlobal(urlPath) {
   try {
-    const { getDb } = require('../db');
-    const db = getDb();
-    const globalFolders = db.prepare('SELECT folder_path FROM global_folders').all();
+    const { GlobalFolder } = require('../db');
     const clean = getCleanUrlPath(urlPath);
+    const globalFolders = await GlobalFolder.find();
     return globalFolders.some(f => {
       const gPath = getCleanUrlPath(f.folder_path);
       return clean === gPath || clean.startsWith(gPath + '/');
@@ -43,43 +51,64 @@ function checkIsGlobal(urlPath) {
   }
 }
 
-function resolvePath(userScope, urlPath) {
+async function resolvePath(userScope, urlPath) {
   let scopeToUse = userScope;
-  if (checkIsGlobal(urlPath)) {
+  if (await checkIsGlobal(urlPath)) {
     scopeToUse = '/';
   }
   const clean = getCleanUrlPath(urlPath);
 
-  // Normalise scope: strip leading slash, join with FILES_ROOT
-  const scopeAbs = path.resolve(FILES_ROOT, scopeToUse.replace(/^\//, ''));
-
-  // Ensure user's scope directory exists on disk to prevent 404 errors
-  if (!fs.existsSync(scopeAbs)) {
-    try {
-      fs.mkdirSync(scopeAbs, { recursive: true });
-    } catch (e) {
-      console.error(`Failed to create scope directory ${scopeAbs}:`, e);
-    }
-  }
-
-  // Normalise urlPath relative to the scope
-  const target = path.resolve(scopeAbs, '.' + clean);
-
-  // Security: ensure target is inside the scope
-  if (!target.startsWith(scopeAbs + path.sep) && target !== scopeAbs) {
-    throw Object.assign(new Error('Path traversal not allowed'), { code: 'FORBIDDEN' });
-  }
-
-  return target;
+  // Combine scope and urlPath
+  let joined = (scopeToUse + '/' + clean).replace(/\/+/g, '/');
+  // S3 keys do not start with a leading slash
+  joined = joined.replace(/^\//, '');
+  return joined;
 }
 
 /**
- * Get stat for a path (null if not found).
+ * Get stat for an S3 key (null if not found).
  */
-function statSafe(absPath) {
+async function statSafe(key) {
+  if (!key) {
+    // Root folder is always a directory
+    return {
+      isDirectory: () => true,
+      size: 0,
+      mtime: new Date(),
+    };
+  }
+
   try {
-    return fs.statSync(absPath);
-  } catch {
+    const data = await s3.send(new HeadObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key
+    }));
+
+    const isDir = key.endsWith('/') || data.ContentType === 'application/x-directory';
+    return {
+      isDirectory: () => isDir,
+      size: data.ContentLength || 0,
+      mtime: data.LastModified || new Date(),
+    };
+  } catch (err) {
+    // Check if objects exist under this prefix (acting as a directory)
+    const prefix = key.endsWith('/') ? key : key + '/';
+    try {
+      const list = await s3.send(new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix,
+        MaxKeys: 1
+      }));
+      if (list.Contents && list.Contents.length > 0) {
+        return {
+          isDirectory: () => true,
+          size: 0,
+          mtime: new Date(),
+        };
+      }
+    } catch (e) {
+      // ignore
+    }
     return null;
   }
 }
@@ -87,35 +116,42 @@ function statSafe(absPath) {
 /**
  * Build a file info object compatible with the original API.
  */
-function buildFileInfo(absPath, urlPath, options = {}) {
-  const stat = fs.statSync(absPath);
-  const name = path.basename(absPath) || '/';
-  const mimeType = stat.isDirectory() ? '' : (mime.lookup(absPath) || 'application/octet-stream');
+async function buildFileInfo(key, urlPath, options = {}) {
+  const stat = await statSafe(key);
+  if (!stat) throw new Error('Not found');
+
+  const name = key ? (key.endsWith('/') ? key.slice(0, -1).split('/').pop() : key.split('/').pop()) : '/';
+  const isDir = stat.isDirectory();
+  const mimeType = isDir ? '' : (mime.lookup(name) || 'application/octet-stream');
 
   const info = {
     path: urlPath || '/',
     name,
     size: stat.size,
-    extension: path.extname(name).toLowerCase(),
+    extension: isDir ? '' : path.extname(name).toLowerCase(),
     modified: stat.mtime.toISOString(),
-    mode: stat.mode,
-    isDir: stat.isDirectory(),
-    isSymlink: stat.isSymbolicLink(),
-    type: getFileType(mimeType, stat.isDirectory()),
+    mode: isDir ? 16877 : 33188,
+    isDir: isDir,
+    isSymlink: false,
+    type: getFileType(mimeType, isDir),
     mimeType,
-    isGlobal: checkIsGlobal(urlPath),
+    isGlobal: await checkIsGlobal(urlPath),
   };
 
-  if (stat.isDirectory() && options.expand) {
-    info.items = listDir(absPath, urlPath);
+  if (isDir && options.expand) {
+    info.items = await listDir(key, urlPath);
     info.numDirs = info.items.filter(i => i.isDir).length;
     info.numFiles = info.items.filter(i => !i.isDir).length;
     info.sorting = options.sorting || { by: 'name', asc: true };
   }
 
-  if (!stat.isDirectory() && options.content) {
+  if (!isDir && options.content) {
     try {
-      const content = fs.readFileSync(absPath, 'utf8');
+      const getObj = await s3.send(new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key
+      }));
+      const content = await getObj.Body.transformToString('utf8');
       info.content = content;
     } catch {
       info.content = '';
@@ -125,37 +161,65 @@ function buildFileInfo(absPath, urlPath, options = {}) {
   return info;
 }
 
-function listDir(absPath, urlPathPrefix) {
-  let entries;
+async function listDir(key, urlPathPrefix) {
+  const prefix = key ? (key.endsWith('/') ? key : key + '/') : '';
   try {
-    entries = fs.readdirSync(absPath);
-  } catch {
-    return [];
-  }
+    const data = await s3.send(new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: prefix,
+      Delimiter: '/'
+    }));
 
-  return entries.map(name => {
-    const childAbs = path.join(absPath, name);
-    const childUrl = (urlPathPrefix === '/' ? '' : urlPathPrefix) + '/' + name;
-    try {
-      const stat = fs.statSync(childAbs);
-      const mimeType = stat.isDirectory() ? '' : (mime.lookup(childAbs) || 'application/octet-stream');
+    const folders = (data.CommonPrefixes || []).map(p => {
+      const name = p.Prefix.slice(prefix.length).replace(/\/$/, '');
+      const childUrl = (urlPathPrefix === '/' ? '' : urlPathPrefix) + '/' + name;
       return {
         path: childUrl,
         name,
-        size: stat.size,
-        extension: path.extname(name).toLowerCase(),
-        modified: stat.mtime.toISOString(),
-        mode: stat.mode,
-        isDir: stat.isDirectory(),
+        size: 0,
+        extension: '',
+        modified: new Date().toISOString(),
+        mode: 16877,
+        isDir: true,
         isSymlink: false,
-        type: getFileType(mimeType, stat.isDirectory()),
-        mimeType,
-        isGlobal: checkIsGlobal(childUrl),
+        type: 'directory',
+        mimeType: '',
+        isGlobal: false,
       };
-    } catch {
-      return null;
+    });
+
+    const files = (data.Contents || [])
+      .filter(item => item.Key !== prefix)
+      .map(item => {
+        const name = item.Key.slice(prefix.length);
+        if (!name) return null;
+        const childUrl = (urlPathPrefix === '/' ? '' : urlPathPrefix) + '/' + name;
+        const mimeType = mime.lookup(name) || 'application/octet-stream';
+        return {
+          path: childUrl,
+          name,
+          size: item.Size,
+          extension: path.extname(name).toLowerCase(),
+          modified: item.LastModified.toISOString(),
+          mode: 33188,
+          isDir: false,
+          isSymlink: false,
+          type: getFileType(mimeType, false),
+          mimeType,
+          isGlobal: false,
+        };
+      })
+      .filter(Boolean);
+
+    const items = [...folders, ...files];
+    for (const item of items) {
+      item.isGlobal = await checkIsGlobal(item.path);
     }
-  }).filter(Boolean);
+    return items;
+  } catch (err) {
+    console.error('Error listing S3 directory:', err);
+    return [];
+  }
 }
 
 function getFileType(mimeType, isDir) {
@@ -164,73 +228,145 @@ function getFileType(mimeType, isDir) {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('video/')) return 'video';
   if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType.startsWith('text/') || mimeType === 'application/json' || mimeType === 'application/javascript') return 'text';
+  if (mimeType.startsWith('text/')) return 'text';
+  if (mimeType === 'application/json' || mimeType === 'application/javascript') return 'text';
   if (mimeType === 'application/pdf') return 'pdf';
   return 'blob';
 }
 
 /**
- * Recursively walk a directory and return flat entries.
+ * Recursively walk an S3 prefix path and return flat entries.
  */
-function walkDir(absPath, urlPathPrefix) {
+async function walkDir(key, urlPathPrefix) {
+  const prefix = key ? (key.endsWith('/') ? key : key + '/') : '';
   const results = [];
-  function walk(abs, urlP) {
-    let entries;
-    try { entries = fs.readdirSync(abs); } catch { return; }
-    for (const name of entries) {
-      const childAbs = path.join(abs, name);
-      const childUrl = urlP === '/' ? '/' + name : urlP + '/' + name;
-      try {
-        const stat = fs.statSync(childAbs);
-        results.push({
-          path: childUrl,
-          name,
-          size: stat.size,
-          modified: stat.mtime.toISOString(),
-          isDir: stat.isDirectory(),
-        });
-        if (stat.isDirectory()) walk(childAbs, childUrl);
-      } catch { /* skip */ }
+  try {
+    const data = await s3.send(new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: prefix
+    }));
+    for (const item of (data.Contents || [])) {
+      if (item.Key === prefix) continue;
+      const relative = item.Key.slice(prefix.length);
+      const isDir = item.Key.endsWith('/');
+      const childUrl = urlPathPrefix === '/' ? '/' + relative : urlPathPrefix + '/' + relative;
+      results.push({
+        path: childUrl,
+        name: relative.split('/').filter(Boolean).pop(),
+        size: item.Size,
+        modified: item.LastModified.toISOString(),
+        isDir: isDir,
+      });
     }
+  } catch (e) {
+    console.error('Error walking S3 prefix:', e);
   }
-  walk(absPath, urlPathPrefix);
   return results;
 }
 
 /**
- * Copy a file or directory recursively.
+ * Copy a file or directory recursively in S3.
  */
 async function copyPath(src, dst) {
-  await fse.copy(src, dst, { overwrite: true });
+  const srcStat = await statSafe(src);
+  if (!srcStat) return;
+
+  if (srcStat.isDirectory()) {
+    const prefix = src ? (src.endsWith('/') ? src : src + '/') : '';
+    const dstPrefix = dst ? (dst.endsWith('/') ? dst : dst + '/') : '';
+
+    const data = await s3.send(new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: prefix
+    }));
+
+    for (const item of (data.Contents || [])) {
+      const relativeKey = item.Key.slice(prefix.length);
+      const newKey = dstPrefix + relativeKey;
+      await s3.send(new CopyObjectCommand({
+        Bucket: BUCKET_NAME,
+        CopySource: `/${BUCKET_NAME}/${item.Key}`,
+        Key: newKey
+      }));
+    }
+  } else {
+    await s3.send(new CopyObjectCommand({
+      Bucket: BUCKET_NAME,
+      CopySource: `/${BUCKET_NAME}/${src}`,
+      Key: dst
+    }));
+  }
 }
 
 /**
- * Move/rename a file or directory.
+ * Move/rename a file or directory in S3.
  */
 async function movePath(src, dst) {
-  await fse.move(src, dst, { overwrite: true });
+  const srcStat = await statSafe(src);
+  if (!srcStat) return;
+
+  if (srcStat.isDirectory()) {
+    const prefix = src ? (src.endsWith('/') ? src : src + '/') : '';
+    const dstPrefix = dst ? (dst.endsWith('/') ? dst : dst + '/') : '';
+
+    const data = await s3.send(new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: prefix
+    }));
+
+    for (const item of (data.Contents || [])) {
+      const relativeKey = item.Key.slice(prefix.length);
+      const newKey = dstPrefix + relativeKey;
+
+      await s3.send(new CopyObjectCommand({
+        Bucket: BUCKET_NAME,
+        CopySource: `/${BUCKET_NAME}/${item.Key}`,
+        Key: newKey
+      }));
+
+      await s3.send(new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: item.Key
+      }));
+    }
+  } else {
+    await s3.send(new CopyObjectCommand({
+      Bucket: BUCKET_NAME,
+      CopySource: `/${BUCKET_NAME}/${src}`,
+      Key: dst
+    }));
+    await s3.send(new DeleteObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: src
+    }));
+  }
 }
 
 /**
  * Generate a non-conflicting name if dst exists.
- * e.g. file(1).txt, file(2).txt
  */
-function addVersionSuffix(dstAbs) {
-  if (!fs.existsSync(dstAbs)) return dstAbs;
-  const dir = path.dirname(dstAbs);
+async function addVersionSuffix(dstAbs) {
+  let stat = await statSafe(dstAbs);
+  if (!stat) return dstAbs;
+
   const ext = path.extname(dstAbs);
+  const dir = path.dirname(dstAbs);
   const base = path.basename(dstAbs, ext);
+
   let counter = 1;
   let candidate;
   do {
-    candidate = path.join(dir, `${base}(${counter})${ext}`);
+    let dirPath = dir === '.' ? '' : dir;
+    candidate = (dirPath ? dirPath + '/' : '') + `${base}(${counter})${ext}`;
     counter++;
-  } while (fs.existsSync(candidate));
+    stat = await statSafe(candidate);
+  } while (stat);
   return candidate;
 }
 
 module.exports = {
-  FILES_ROOT,
+  s3,
+  BUCKET_NAME,
   resolvePath,
   statSafe,
   buildFileInfo,

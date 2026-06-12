@@ -1,7 +1,7 @@
 'use strict';
 
 const jwt = require('jsonwebtoken');
-const { getDb, dbUserToJson } = require('../db');
+const { User, dbUserToJson } = require('../db');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
 
@@ -31,7 +31,7 @@ function extractToken(req) {
 /**
  * requireAuth – attaches req.user or returns 401.
  */
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const token = extractToken(req);
   if (!token) {
     return res.status(401).json({ error: 'No token provided' });
@@ -41,30 +41,33 @@ function requireAuth(req, res, next) {
   try {
     payload = jwt.verify(token, JWT_SECRET);
   } catch (err) {
-    // Check if token is close to expiry (renew hint)
     if (err.name === 'TokenExpiredError') {
       return res.status(401).json({ error: 'Token expired' });
     }
     return res.status(401).json({ error: 'Invalid token' });
   }
 
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id);
-  if (!row) {
-    return res.status(401).json({ error: 'User not found' });
+  try {
+    const row = await User.findOne({ id: payload.id });
+    if (!row) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    const user = dbUserToJson(row);
+    user._raw = row; // keep raw for password checks
+
+    // Hint frontend to renew token if it expires within 1 hour
+    const expiresIn = payload.exp - Math.floor(Date.now() / 1000);
+    if (expiresIn < 3600) {
+      res.setHeader('X-Renew-Token', 'true');
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    console.error('Auth middleware error:', err);
+    return res.status(500).json({ error: 'Internal authentication error' });
   }
-
-  const user = dbUserToJson(row);
-  user._raw = row; // keep raw for password checks
-
-  // Hint frontend to renew token if it expires within 1 hour
-  const expiresIn = payload.exp - Math.floor(Date.now() / 1000);
-  if (expiresIn < 3600) {
-    res.setHeader('X-Renew-Token', 'true');
-  }
-
-  req.user = user;
-  next();
 }
 
 /**

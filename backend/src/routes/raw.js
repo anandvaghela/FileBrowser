@@ -2,13 +2,44 @@
 
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const archiver = require('archiver');
 const mime = require('mime-types');
 const { requireAuth } = require('../middleware/auth');
-const { resolvePath, statSafe } = require('../services/fileSystem');
+const { s3, BUCKET_NAME, resolvePath, statSafe, walkDir } = require('../services/fileSystem');
+const { GetObjectCommand } = require('@aws-sdk/client-s3');
 
 const router = express.Router();
+
+async function getShareAccess(userId, itemPath) {
+  try {
+    const { UserShare, User } = require('../db');
+    const normalised = itemPath.replace(/\/$/, '');
+    const shares = await UserShare.find({ shared_with: userId });
+
+    let matchedShare = null;
+    for (const s of shares) {
+      const sPath = s.item_path.replace(/\/$/, '');
+      if (normalised === sPath || normalised.startsWith(sPath + '/')) {
+        if (!matchedShare || s.item_path.length > matchedShare.item_path.length) {
+          matchedShare = s;
+        }
+      }
+    }
+
+    if (!matchedShare) return null;
+
+    const owner = await User.findOne({ id: matchedShare.owner_id });
+    if (!owner) return null;
+
+    return {
+      can_write: matchedShare.can_write,
+      owner_id: matchedShare.owner_id,
+      scope: owner.scope
+    };
+  } catch (e) {
+    return null;
+  }
+}
 
 // GET /api/raw/* — download a raw file or a zipped directory
 router.get('/*', requireAuth, async (req, res) => {
@@ -17,34 +48,15 @@ router.get('/*', requireAuth, async (req, res) => {
   }
 
   const urlPath = '/' + (req.params[0] || '');
-  const inline = req.query.inline === 'true';
-  const algo = req.query.algo; // for checksum (unused here — see resources route)
-
-  const { getDb } = require('../db');
-
-  function getShareAccess(db, userId, itemPath) {
-    const normalised = itemPath.replace(/\/$/, '');
-    const row = db.prepare(`
-      SELECT us.can_write, us.owner_id, u.scope
-      FROM user_shares us
-      JOIN users u ON u.id = us.owner_id
-      WHERE us.shared_with = ?
-        AND (us.item_path = ? OR us.item_path = ? OR ? LIKE (us.item_path || '%'))
-      ORDER BY LENGTH(us.item_path) DESC
-      LIMIT 1
-    `).get(userId, normalised, normalised + '/', normalised);
-    return row || null;
-  }
 
   try {
-    const db = getDb();
     let scopeToUse = req.user.scope;
-    const access = getShareAccess(db, req.user.id, urlPath);
+    const access = await getShareAccess(req.user.id, urlPath);
     if (access) {
       scopeToUse = access.scope;
     }
-    const absPath = resolvePath(scopeToUse, urlPath);
-    const stat = statSafe(absPath);
+    const absPath = await resolvePath(scopeToUse, urlPath);
+    const stat = await statSafe(absPath);
     if (!stat) return res.status(404).json({ error: 'Not found' });
 
     if (stat.isDirectory()) {
@@ -57,13 +69,27 @@ router.get('/*', requireAuth, async (req, res) => {
         if (!res.headersSent) res.status(500).json({ error: err.message });
       });
       archive.pipe(res);
-      archive.directory(absPath, name);
+
+      const files = await walkDir(absPath, urlPath);
+      for (const file of files) {
+        if (file.isDir) continue;
+        const relativePath = file.path.slice(urlPath.length).replace(/^\//, '');
+        const fileKey = await resolvePath(scopeToUse, file.path);
+        try {
+          const fileObj = await s3.send(new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: fileKey
+          }));
+          archive.append(fileObj.Body, { name: relativePath });
+        } catch (err) {
+          console.error('Failed to append file to zip from S3:', fileKey, err);
+        }
+      }
       await archive.finalize();
     } else {
       const mimeType = mime.lookup(absPath) || 'application/octet-stream';
-      const name = path.basename(absPath);
+      const name = absPath.split('/').pop() || 'file';
 
-      // Types that browsers can display inline — default to inline unless ?inline=false
       const inlineTypes = ['application/pdf', 'image/', 'video/', 'audio/', 'text/'];
       const browserCanDisplay = inlineTypes.some(t => mimeType.startsWith(t));
       const forceDownload = req.query.inline === 'false';
@@ -71,10 +97,9 @@ router.get('/*', requireAuth, async (req, res) => {
 
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Disposition', disposition);
-      res.setHeader('Content-Length', stat.size);
 
-      // Support range requests for video/audio
       const range = req.headers.range;
+      let fileObj;
       if (range) {
         const parts = range.replace(/bytes=/, '').split('-');
         const start = parseInt(parts[0], 10);
@@ -86,11 +111,21 @@ router.get('/*', requireAuth, async (req, res) => {
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Content-Length', chunkSize);
 
-        fs.createReadStream(absPath, { start, end }).pipe(res);
+        fileObj = await s3.send(new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: absPath,
+          Range: `bytes=${start}-${end}`
+        }));
       } else {
         res.setHeader('Accept-Ranges', 'bytes');
-        fs.createReadStream(absPath).pipe(res);
+        res.setHeader('Content-Length', stat.size);
+
+        fileObj = await s3.send(new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: absPath
+        }));
       }
+      fileObj.Body.pipe(res);
     }
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });

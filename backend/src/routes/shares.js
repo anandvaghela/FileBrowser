@@ -3,12 +3,12 @@
 const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const { getDb } = require('../db');
+const { Share, User } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { resolvePath, buildFileInfo, statSafe } = require('../services/fileSystem');
+const { s3, BUCKET_NAME, resolvePath, buildFileInfo, statSafe, walkDir } = require('../services/fileSystem');
+const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const archiver = require('archiver');
 const path = require('path');
-const fs = require('fs');
 
 const router = express.Router();
 
@@ -29,33 +29,44 @@ function shareToJson(s) {
   };
 }
 
+function escapeRegex(string) {
+  return string.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+}
+
 // GET /api/shares — list all (admin) or own (user)
-router.get('/shares', requireAuth, (req, res) => {
+router.get('/shares', requireAuth, async (req, res) => {
   if (!canShare(req.user)) return res.status(403).json({ error: 'Share permission denied' });
 
-  const db = getDb();
-  let rows;
-  if (req.user.perm.admin) {
-    rows = db.prepare('SELECT * FROM shares ORDER BY user_id, expire').all();
-  } else {
-    rows = db.prepare('SELECT * FROM shares WHERE user_id = ? ORDER BY expire').all(req.user.id);
+  try {
+    let rows;
+    if (req.user.perm.admin) {
+      rows = await Share.find().sort({ user_id: 1, expire: 1 });
+    } else {
+      rows = await Share.find({ user_id: req.user.id }).sort({ expire: 1 });
+    }
+    return res.json(rows.map(shareToJson));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-  return res.json(rows.map(shareToJson));
 });
 
 // GET /api/share/* — get shares for a specific path
-router.get('/share/*', requireAuth, (req, res) => {
+router.get('/share/*', requireAuth, async (req, res) => {
   if (!canShare(req.user)) return res.status(403).json({ error: 'Share permission denied' });
 
   const urlPath = '/' + (req.params[0] || '');
-  const db = getDb();
-  let rows;
-  if (req.user.perm.admin) {
-    rows = db.prepare('SELECT * FROM shares WHERE path LIKE ?').all(urlPath + '%');
-  } else {
-    rows = db.prepare('SELECT * FROM shares WHERE path LIKE ? AND user_id = ?').all(urlPath + '%', req.user.id);
+  try {
+    let rows;
+    const pathPattern = new RegExp('^' + escapeRegex(urlPath));
+    if (req.user.perm.admin) {
+      rows = await Share.find({ path: pathPattern });
+    } else {
+      rows = await Share.find({ path: pathPattern, user_id: req.user.id });
+    }
+    return res.json(rows.map(shareToJson));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-  return res.json(rows.map(shareToJson));
 });
 
 // POST /api/share/* — create a share link
@@ -84,14 +95,20 @@ router.post('/share/*', requireAuth, async (req, res) => {
     token = tokenBuf.toString('base64url');
   }
 
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO shares (hash, path, user_id, expire, password_hash, token)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(hash, urlPath, req.user.id, expire, passwordHash, token);
+  try {
+    const newShare = await Share.create({
+      hash,
+      path: urlPath,
+      user_id: req.user.id,
+      expire,
+      password_hash: passwordHash,
+      token
+    });
 
-  const row = db.prepare('SELECT * FROM shares WHERE hash = ?').get(hash);
-  return res.json(shareToJson(row));
+    return res.json(shareToJson(newShare));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // DELETE /api/share/:hash — delete a share
@@ -99,16 +116,19 @@ router.delete('/share/:hash', requireAuth, async (req, res) => {
   if (!canShare(req.user)) return res.status(403).json({ error: 'Share permission denied' });
 
   const { hash } = req.params;
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM shares WHERE hash = ?').get(hash);
-  if (!row) return res.status(404).json({ error: 'Share not found' });
+  try {
+    const row = await Share.findOne({ hash });
+    if (!row) return res.status(404).json({ error: 'Share not found' });
 
-  if (row.user_id !== req.user.id && !req.user.perm.admin) {
-    return res.status(403).json({ error: 'Forbidden' });
+    if (row.user_id !== req.user.id && !req.user.perm.admin) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    await Share.deleteOne({ hash });
+    return res.status(200).json({ message: 'Share deleted' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
-
-  db.prepare('DELETE FROM shares WHERE hash = ?').run(hash);
-  return res.status(200).json({ message: 'Share deleted' });
 });
 
 // GET /api/public/share/:hash — get share info (public)
@@ -116,32 +136,31 @@ router.get('/public/share/:hash', async (req, res) => {
   const { hash } = req.params;
   const password = req.query.password || req.headers['x-share-password'];
 
-  const db = getDb();
-  const share = db.prepare('SELECT * FROM shares WHERE hash = ?').get(hash);
-  if (!share) return res.status(404).json({ error: 'Share not found' });
-
-  // Check expiry
-  if (share.expire > 0 && Math.floor(Date.now() / 1000) > share.expire) {
-    return res.status(410).json({ error: 'Share link expired' });
-  }
-
-  // Check password
-  if (share.password_hash) {
-    if (!password) return res.status(401).json({ error: 'Password required', passwordRequired: true });
-    const valid = await bcrypt.compare(password, share.password_hash);
-    if (!valid) return res.status(403).json({ error: 'Wrong password' });
-  }
-
-  // Load file/dir info
-  const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(share.user_id);
-  if (!owner) return res.status(404).json({ error: 'Owner not found' });
-
   try {
-    const absPath = resolvePath(owner.scope, share.path);
-    const stat = statSafe(absPath);
+    const share = await Share.findOne({ hash });
+    if (!share) return res.status(404).json({ error: 'Share not found' });
+
+    // Check expiry
+    if (share.expire > 0 && Math.floor(Date.now() / 1000) > share.expire) {
+      return res.status(410).json({ error: 'Share link expired' });
+    }
+
+    // Check password
+    if (share.password_hash) {
+      if (!password) return res.status(401).json({ error: 'Password required', passwordRequired: true });
+      const valid = await bcrypt.compare(password, share.password_hash);
+      if (!valid) return res.status(403).json({ error: 'Wrong password' });
+    }
+
+    // Load file/dir info
+    const owner = await User.findOne({ id: share.user_id });
+    if (!owner) return res.status(404).json({ error: 'Owner not found' });
+
+    const absPath = await resolvePath(owner.scope, share.path);
+    const stat = await statSafe(absPath);
     if (!stat) return res.status(404).json({ error: 'File not found' });
 
-    const info = buildFileInfo(absPath, share.path, { expand: stat.isDirectory() });
+    const info = await buildFileInfo(absPath, share.path, { expand: stat.isDirectory() });
     info.share = shareToJson(share);
     return res.json(info);
   } catch (err) {
@@ -154,37 +173,50 @@ router.get('/public/dl/:hash', async (req, res) => {
   const { hash } = req.params;
   const password = req.query.password || req.headers['x-share-password'];
 
-  const db = getDb();
-  const share = db.prepare('SELECT * FROM shares WHERE hash = ?').get(hash);
-  if (!share) return res.status(404).json({ error: 'Share not found' });
-
-  if (share.expire > 0 && Math.floor(Date.now() / 1000) > share.expire) {
-    return res.status(410).json({ error: 'Share link expired' });
-  }
-
-  if (share.password_hash) {
-    if (!password) return res.status(401).json({ error: 'Password required', passwordRequired: true });
-    const valid = await bcrypt.compare(password, share.password_hash);
-    if (!valid) return res.status(403).json({ error: 'Wrong password' });
-  }
-
-  const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(share.user_id);
-  if (!owner) return res.status(404).json({ error: 'Owner not found' });
-
   try {
-    const absPath = resolvePath(owner.scope, share.path);
-    const stat = statSafe(absPath);
+    const share = await Share.findOne({ hash });
+    if (!share) return res.status(404).json({ error: 'Share not found' });
+
+    if (share.expire > 0 && Math.floor(Date.now() / 1000) > share.expire) {
+      return res.status(410).json({ error: 'Share link expired' });
+    }
+
+    if (share.password_hash) {
+      if (!password) return res.status(401).json({ error: 'Password required', passwordRequired: true });
+      const valid = await bcrypt.compare(password, share.password_hash);
+      if (!valid) return res.status(403).json({ error: 'Wrong password' });
+    }
+
+    const owner = await User.findOne({ id: share.user_id });
+    if (!owner) return res.status(404).json({ error: 'Owner not found' });
+
+    const absPath = await resolvePath(owner.scope, share.path);
+    const stat = await statSafe(absPath);
     if (!stat) return res.status(404).json({ error: 'File not found' });
 
     if (stat.isDirectory()) {
-      // Zip and stream
       const name = path.basename(share.path) || 'files';
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename="${name}.zip"`);
 
       const archive = archiver('zip', { zlib: { level: 6 } });
       archive.pipe(res);
-      archive.directory(absPath, name);
+
+      const files = await walkDir(absPath, share.path);
+      for (const file of files) {
+        if (file.isDir) continue;
+        const relativePath = file.path.slice(share.path.length).replace(/^\//, '');
+        const fileKey = await resolvePath(owner.scope, file.path);
+        try {
+          const fileObj = await s3.send(new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: fileKey
+          }));
+          archive.append(fileObj.Body, { name: relativePath });
+        } catch (err) {
+          console.error('Failed to append file to zip from S3:', fileKey, err);
+        }
+      }
       await archive.finalize();
     } else {
       const name = path.basename(absPath);
@@ -192,7 +224,12 @@ router.get('/public/dl/:hash', async (req, res) => {
       res.setHeader('Content-Type', mime.lookup(absPath) || 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
       res.setHeader('Content-Length', stat.size);
-      fs.createReadStream(absPath).pipe(res);
+
+      const fileObj = await s3.send(new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath
+      }));
+      fileObj.Body.pipe(res);
     }
   } catch (err) {
     return res.status(500).json({ error: err.message });

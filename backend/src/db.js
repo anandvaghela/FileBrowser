@@ -1,138 +1,220 @@
 'use strict';
 
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
-const DB_PATH = process.env.DB_PATH || './data/filebrowser.db';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/filebrowser';
 
-// Ensure data directory exists
-fs.mkdirSync(path.dirname(path.resolve(DB_PATH)), { recursive: true });
+// ─── Models & Schemas ─────────────────────────────────────────────────────────
 
-let db;
+// Counter Schema for Auto-Incrementing IDs
+const counterSchema = new mongoose.Schema({
+  _id: { type: String, required: true },
+  seq: { type: Number, default: 0 }
+});
+const Counter = mongoose.model('Counter', counterSchema);
+
+async function getNextSequenceValue(sequenceName) {
+  const sequenceDocument = await Counter.findByIdAndUpdate(
+    sequenceName,
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+  return sequenceDocument.seq;
+}
+
+// User Schema
+const userSchema = new mongoose.Schema({
+  id: { type: Number, unique: true },
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  scope: { type: String, default: '/' },
+  locale: { type: String, default: 'en' },
+  view_mode: { type: String, default: 'mosaic' },
+  single_click: { type: Number, default: 0 },
+  perm_admin: { type: Number, default: 0 },
+  perm_execute: { type: Number, default: 0 },
+  perm_create: { type: Number, default: 1 },
+  perm_rename: { type: Number, default: 1 },
+  perm_modify: { type: Number, default: 1 },
+  perm_delete: { type: Number, default: 1 },
+  perm_share: { type: Number, default: 1 },
+  perm_download: { type: Number, default: 1 },
+  lock_password: { type: Number, default: 0 },
+  hide_dotfiles: { type: Number, default: 0 },
+  date_format: { type: Number, default: 0 },
+  commands: { type: String, default: '[]' },
+  rules: { type: String, default: '[]' }
+}, { timestamps: { createdAt: 'created_at_time', updatedAt: 'updated_at_time' } });
+
+// Convert created_at/updated_at to Unix timestamps to maintain DB compatibility
+userSchema.virtual('created_at').get(function() {
+  return Math.floor(this.created_at_time.getTime() / 1000);
+});
+userSchema.virtual('updated_at').get(function() {
+  return Math.floor(this.updated_at_time.getTime() / 1000);
+});
+
+userSchema.pre('save', async function() {
+  if (this.isNew) {
+    this.id = await getNextSequenceValue('users');
+  }
+});
+
+const User = mongoose.model('User', userSchema);
+
+// Share Schema
+const shareSchema = new mongoose.Schema({
+  id: { type: Number, unique: true },
+  hash: { type: String, required: true, unique: true },
+  path: { type: String, required: true },
+  user_id: { type: Number, required: true }, // refers to User.id
+  expire: { type: Number, default: 0 },
+  password_hash: { type: String, default: '' },
+  token: { type: String, default: '' },
+  created_at: { type: Number, default: () => Math.floor(Date.now() / 1000) }
+});
+
+shareSchema.pre('save', async function() {
+  if (this.isNew) {
+    this.id = await getNextSequenceValue('shares');
+  }
+});
+
+const Share = mongoose.model('Share', shareSchema);
+
+// Settings Schema
+const settingsSchema = new mongoose.Schema({
+  id: { type: Number, default: 1, unique: true },
+  signup: { type: Number, default: 0 },
+  create_user_dir: { type: Number, default: 0 },
+  user_home_base: { type: String, default: '/users' },
+  auth_method: { type: String, default: 'json' },
+  branding: { type: String, default: '{}' },
+  commands: { type: String, default: '{}' },
+  shell: { type: String, default: '[]' },
+  rules: { type: String, default: '[]' },
+  min_pwd_length: { type: Number, default: 8 },
+  hide_dotfiles: { type: Number, default: 0 }
+});
+
+const Settings = mongoose.model('Settings', settingsSchema);
+
+// GlobalFolder Schema
+const globalFolderSchema = new mongoose.Schema({
+  id: { type: Number, unique: true },
+  folder_path: { type: String, required: true, unique: true },
+  created_by: { type: Number, required: true }, // refers to User.id
+  created_at: { type: Number, default: () => Math.floor(Date.now() / 1000) }
+});
+
+globalFolderSchema.pre('save', async function() {
+  if (this.isNew) {
+    this.id = await getNextSequenceValue('global_folders');
+  }
+});
+
+const GlobalFolder = mongoose.model('GlobalFolder', globalFolderSchema);
+
+// UserItem Schema
+const userItemSchema = new mongoose.Schema({
+  id: { type: Number, unique: true },
+  user_id: { type: Number, required: true }, // refers to User.id
+  item_path: { type: String, required: true },
+  show_to_admin: { type: Number, default: 0 },
+  created_at: { type: Number, default: () => Math.floor(Date.now() / 1000) }
+});
+
+userItemSchema.index({ user_id: 1, item_path: 1 }, { unique: true });
+
+userItemSchema.pre('save', async function() {
+  if (this.isNew) {
+    this.id = await getNextSequenceValue('user_items');
+  }
+});
+
+const UserItem = mongoose.model('UserItem', userItemSchema);
+
+// UserShare Schema
+const userShareSchema = new mongoose.Schema({
+  id: { type: Number, unique: true },
+  item_path: { type: String, required: true },
+  owner_id: { type: Number, required: true }, // refers to User.id
+  shared_with: { type: Number, required: true }, // refers to User.id
+  can_write: { type: Number, default: 0 },
+  created_at: { type: Number, default: () => Math.floor(Date.now() / 1000) }
+});
+
+userShareSchema.index({ item_path: 1, owner_id: 1, shared_with: 1 }, { unique: true });
+
+userShareSchema.pre('save', async function() {
+  if (this.isNew) {
+    this.id = await getNextSequenceValue('user_shares');
+  }
+});
+
+const UserShare = mongoose.model('UserShare', userShareSchema);
+
+// TusUpload Schema
+const tusUploadSchema = new mongoose.Schema({
+  upload_id: { type: String, required: true, unique: true },
+  file_path: { type: String, required: true },
+  size: { type: Number, default: 0 },
+  offset: { type: Number, default: 0 },
+  metadata: { type: String, default: '{}' },
+  user_id: { type: Number, required: true },
+  created_at: { type: Number, default: () => Math.floor(Date.now() / 1000) },
+  updated_at: { type: Number, default: () => Math.floor(Date.now() / 1000) }
+});
+
+const TusUpload = mongoose.model('TusUpload', tusUploadSchema);
+
+// ─── Connection & Seed Logic ──────────────────────────────────────────────────
+
+let dbConnected = false;
 
 function getDb() {
-  if (!db) {
-    db = new Database(path.resolve(DB_PATH));
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    initSchema();
+  if (!dbConnected) {
+    mongoose.connect(MONGODB_URI)
+      .then(() => {
+        console.log('[MongoDB] Connected to database');
+        seedDb();
+      })
+      .catch(err => {
+        console.error('[MongoDB] Connection error:', err);
+      });
+    dbConnected = true;
   }
-  return db;
+  return mongoose.connection;
 }
 
-function initSchema() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      username    TEXT    NOT NULL UNIQUE,
-      password    TEXT    NOT NULL,
-      scope       TEXT    NOT NULL DEFAULT '/',
-      locale      TEXT    NOT NULL DEFAULT 'en',
-      view_mode   TEXT    NOT NULL DEFAULT 'mosaic',
-      single_click INTEGER NOT NULL DEFAULT 0,
-      perm_admin   INTEGER NOT NULL DEFAULT 0,
-      perm_execute INTEGER NOT NULL DEFAULT 0,
-      perm_create  INTEGER NOT NULL DEFAULT 1,
-      perm_rename  INTEGER NOT NULL DEFAULT 1,
-      perm_modify  INTEGER NOT NULL DEFAULT 1,
-      perm_delete  INTEGER NOT NULL DEFAULT 1,
-      perm_share   INTEGER NOT NULL DEFAULT 1,
-      perm_download INTEGER NOT NULL DEFAULT 1,
-      lock_password INTEGER NOT NULL DEFAULT 0,
-      hide_dotfiles INTEGER NOT NULL DEFAULT 0,
-      date_format   INTEGER NOT NULL DEFAULT 0,
-      commands      TEXT    NOT NULL DEFAULT '[]',
-      rules         TEXT    NOT NULL DEFAULT '[]',
-      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
-    );
+async function seedDb() {
+  try {
+    // Seed default settings if not exists
+    const settingsCount = await Settings.countDocuments();
+    if (settingsCount === 0) {
+      await Settings.create({ id: 1 });
+      console.log('[MongoDB] Seeded default settings');
+    }
 
-    CREATE TABLE IF NOT EXISTS shares (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      hash          TEXT    NOT NULL UNIQUE,
-      path          TEXT    NOT NULL,
-      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expire        INTEGER NOT NULL DEFAULT 0,
-      password_hash TEXT    NOT NULL DEFAULT '',
-      token         TEXT    NOT NULL DEFAULT '',
-      created_at    INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      id              INTEGER PRIMARY KEY DEFAULT 1,
-      signup          INTEGER NOT NULL DEFAULT 0,
-      create_user_dir INTEGER NOT NULL DEFAULT 0,
-      user_home_base  TEXT    NOT NULL DEFAULT '/users',
-      auth_method     TEXT    NOT NULL DEFAULT 'json',
-      branding        TEXT    NOT NULL DEFAULT '{}',
-      commands        TEXT    NOT NULL DEFAULT '{}',
-      shell           TEXT    NOT NULL DEFAULT '[]',
-      rules           TEXT    NOT NULL DEFAULT '[]',
-      min_pwd_length  INTEGER NOT NULL DEFAULT 8,
-      hide_dotfiles   INTEGER NOT NULL DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS global_folders (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      folder_path TEXT    NOT NULL UNIQUE,
-      created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE IF NOT EXISTS user_items (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      item_path   TEXT    NOT NULL,
-      show_to_admin INTEGER NOT NULL DEFAULT 0,
-      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-      UNIQUE(user_id, item_path)
-    );
-
-    CREATE TABLE IF NOT EXISTS user_shares (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      item_path   TEXT    NOT NULL,
-      owner_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      shared_with INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      can_write   INTEGER NOT NULL DEFAULT 0,
-      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-      UNIQUE(item_path, owner_id, shared_with)
-    );
-
-    CREATE TABLE IF NOT EXISTS tus_uploads (
-      upload_id   TEXT    PRIMARY KEY,
-      file_path   TEXT    NOT NULL,
-      size        INTEGER NOT NULL DEFAULT 0,
-      offset      INTEGER NOT NULL DEFAULT 0,
-      metadata    TEXT    NOT NULL DEFAULT '{}',
-      user_id     INTEGER NOT NULL,
-      created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-      updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-  `);
-
-  // Seed settings if empty
-  const s = db.prepare('SELECT id FROM settings WHERE id = 1').get();
-  if (!s) {
-    db.prepare('INSERT INTO settings (id) VALUES (1)').run();
-  }
-
-  // Seed default admin if no users exist
-  const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-  if (userCount === 0) {
-    const hash = bcrypt.hashSync('admin', 10);
-    db.prepare(`
-      INSERT INTO users (username, password, scope, perm_admin)
-      VALUES ('admin', ?, '/', 1)
-    `).run(hash);
-    console.log('[DB] Default admin user created: admin / admin');
-    console.log('[DB] IMPORTANT: Change the default password immediately!');
+    // Seed default admin if no users exist
+    const userCount = await User.countDocuments();
+    if (userCount === 0) {
+      const hash = bcrypt.hashSync('admin', 10);
+      await User.create({
+        username: 'admin',
+        password: hash,
+        scope: '/',
+        perm_admin: 1
+      });
+      console.log('[MongoDB] Default admin user created: admin / admin');
+      console.log('[MongoDB] IMPORTANT: Change the default password immediately!');
+    }
+  } catch (err) {
+    console.error('[MongoDB] Seed error:', err);
   }
 }
-
-// ─── User helpers ──────────────────────────────────────────────────────────────
 
 function dbUserToJson(u) {
   if (!u) return null;
@@ -158,9 +240,20 @@ function dbUserToJson(u) {
       share: !!u.perm_share,
       download: !!u.perm_download,
     },
-    createdAt: u.created_at,
-    updatedAt: u.updated_at,
+    createdAt: u.created_at || Math.floor(Date.now() / 1000),
+    updatedAt: u.updated_at || Math.floor(Date.now() / 1000),
   };
 }
 
-module.exports = { getDb, dbUserToJson };
+module.exports = {
+  getDb,
+  dbUserToJson,
+  Counter,
+  User,
+  Share,
+  Settings,
+  GlobalFolder,
+  UserItem,
+  UserShare,
+  TusUpload,
+};

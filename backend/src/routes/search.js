@@ -1,10 +1,11 @@
 'use strict';
 
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const { requireAuth } = require('../middleware/auth');
-const { resolvePath } = require('../services/fileSystem');
+const { User, GlobalFolder } = require('../db');
+const { s3, BUCKET_NAME, resolvePath } = require('../services/fileSystem');
+const { ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const path = require('path');
 
 const router = express.Router();
 
@@ -22,14 +23,10 @@ router.get('/*', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'query parameter required' });
   }
 
-  // Get other users' scopes to filter search results and avoid searching other users' folders
   let otherScopes = [];
   let globalFolders = [];
   try {
-    const { getDb } = require('../db');
-    const db = getDb();
-    
-    const otherUsers = db.prepare('SELECT scope FROM users WHERE id != ?').all(req.user.id);
+    const otherUsers = await User.find({ id: { $ne: req.user.id } }, 'scope');
     otherScopes = otherUsers.map(u => {
       let p = (u.scope || '').replace(/\\/g, '/').replace(/\/+/g, '/');
       if (!p.startsWith('/')) p = '/' + p;
@@ -37,7 +34,7 @@ router.get('/*', requireAuth, async (req, res) => {
       return p;
     }).filter(p => p !== '/' && p !== '');
 
-    const globals = db.prepare('SELECT folder_path FROM global_folders').all();
+    const globals = await GlobalFolder.find({}, 'folder_path');
     globalFolders = globals.map(f => {
       let p = (f.folder_path || '').replace(/\\/g, '/').replace(/\/+/g, '/');
       if (!p.startsWith('/')) p = '/' + p;
@@ -51,7 +48,6 @@ router.get('/*', requireAuth, async (req, res) => {
   function isOtherUserScope(urlPath) {
     const cleanUrl = urlPath.replace(/\\/g, '/').replace(/\/+/g, '/');
     
-    // Global folders are public and searchable by design, bypass check
     const isGlobal = globalFolders.some(g => cleanUrl === g || cleanUrl.startsWith(g + '/'));
     if (isGlobal) return false;
 
@@ -62,13 +58,9 @@ router.get('/*', requireAuth, async (req, res) => {
 
   let absRoot;
   try {
-    absRoot = resolvePath(req.user.scope, urlPath);
+    absRoot = await resolvePath(req.user.scope, urlPath);
   } catch (err) {
     return res.status(403).json({ error: err.message });
-  }
-
-  if (!fs.existsSync(absRoot)) {
-    return res.status(404).json({ error: 'Path not found' });
   }
 
   // Parse type: filter
@@ -89,7 +81,6 @@ router.get('/*', requireAuth, async (req, res) => {
   let closed = false;
   req.on('close', () => { closed = true; });
 
-  // Heartbeat to keep connection alive
   const heartbeat = setInterval(() => {
     if (!closed && !res.writableEnded) {
       res.write('\n');
@@ -98,9 +89,9 @@ router.get('/*', requireAuth, async (req, res) => {
 
   const mime = require('mime-types');
 
-  function getType(absPath, stat) {
-    if (stat.isDirectory()) return 'directory';
-    const m = mime.lookup(absPath) || '';
+  function getType(key, isDir) {
+    if (isDir) return 'directory';
+    const m = mime.lookup(key) || '';
     if (m.startsWith('image/')) return 'image';
     if (m.startsWith('video/')) return 'video';
     if (m.startsWith('audio/')) return 'audio';
@@ -108,18 +99,17 @@ router.get('/*', requireAuth, async (req, res) => {
     return 'blob';
   }
 
-  function matchesQuery(name, absPath, stat) {
+  function matchesQuery(name, key, isDir) {
     const lname = name.toLowerCase();
 
     if (typeFilter) {
-      const fileType = getType(absPath, stat);
-      if (typeFilter === 'dir' && !stat.isDirectory()) return false;
+      const fileType = getType(key, isDir);
+      if (typeFilter === 'dir' && !isDir) return false;
       if (typeFilter !== 'dir' && fileType !== typeFilter) return false;
     }
 
     if (!nameQuery) return true;
 
-    // glob-style: starts with *, ends with *, or contains *
     if (nameQuery.includes('*')) {
       const pattern = nameQuery.replace(/\*/g, '.*');
       return new RegExp(pattern).test(lname);
@@ -128,52 +118,50 @@ router.get('/*', requireAuth, async (req, res) => {
     return lname.includes(nameQuery);
   }
 
-  async function walk(absDir, urlDir) {
-    if (closed || res.writableEnded) return;
+  try {
+    let continuationToken = null;
+    const prefix = absRoot ? (absRoot.endsWith('/') ? absRoot : absRoot + '/') : '';
+    
+    do {
+      if (closed || res.writableEnded) break;
 
-    let entries;
-    try {
-      entries = fs.readdirSync(absDir);
-    } catch {
-      return;
-    }
+      const data = await s3.send(new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix,
+        ContinuationToken: continuationToken
+      }));
 
-    for (const name of entries) {
-      if (closed || res.writableEnded) return;
-      if (name.startsWith('.') && req.user.hideDotfiles) continue;
+      for (const item of (data.Contents || [])) {
+        if (closed || res.writableEnded) break;
+        if (item.Key === prefix) continue;
 
-      const childAbs = path.join(absDir, name);
-      const childUrl = (urlDir === '/' ? '' : urlDir) + '/' + name;
+        const relativeKey = item.Key.slice(prefix.length);
+        const childUrl = (urlPath === '/' ? '' : urlPath) + '/' + relativeKey;
 
-      if (isOtherUserScope(childUrl)) {
-        continue;
-      }
+        if (isOtherUserScope(childUrl)) {
+          continue;
+        }
 
-      let stat;
-      try {
-        stat = fs.statSync(childAbs);
-      } catch {
-        continue;
-      }
+        const name = relativeKey.split('/').filter(Boolean).pop();
+        if (!name) continue;
+        if (name.startsWith('.') && req.user.hideDotfiles) continue;
 
-      if (matchesQuery(name, childAbs, stat)) {
-        const result = { path: childUrl, dir: stat.isDirectory() };
-        try {
-          res.write(JSON.stringify(result) + '\n');
-        } catch {
-          closed = true;
-          return;
+        const isDir = item.Key.endsWith('/');
+
+        if (matchesQuery(name, item.Key, isDir)) {
+          const result = { path: childUrl.replace(/\/+/g, '/'), dir: isDir };
+          try {
+            res.write(JSON.stringify(result) + '\n');
+          } catch {
+            closed = true;
+            break;
+          }
         }
       }
 
-      if (stat.isDirectory()) {
-        await walk(childAbs, childUrl);
-      }
-    }
-  }
+      continuationToken = data.NextContinuationToken;
+    } while (continuationToken);
 
-  try {
-    await walk(absRoot, urlPath);
   } catch (err) {
     if (!res.writableEnded) {
       res.write(JSON.stringify({ error: err.message }) + '\n');

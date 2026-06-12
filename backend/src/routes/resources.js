@@ -3,10 +3,12 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const fse = require('fs-extra');
 const multer = require('multer');
 const { requireAuth } = require('../middleware/auth');
+const { User, UserItem, Share, GlobalFolder } = require('../db');
 const {
+  s3,
+  BUCKET_NAME,
   resolvePath,
   statSafe,
   buildFileInfo,
@@ -15,35 +17,27 @@ const {
   movePath,
   addVersionSuffix,
 } = require('../services/fileSystem');
+const { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
 const router = express.Router();
 
-// multer: store to a temp path then move ourselves so we control the dest
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: parseInt(process.env.MAX_UPLOAD_SIZE || '10737418240') },
 });
 
-// ── Helper: normalise the URL path ────────────────────────────────────────────
-function getUrlPath(req, prefix) {
-  let p = req.path || '/';
-  // remove prefix the router mounted at
-  if (prefix && p.startsWith(prefix)) p = p.slice(prefix.length);
-  return p || '/';
-}
-
 // GET /api/resources/*  — list directory or get file info
-router.get('/*', requireAuth, (req, res) => {
+router.get('/*', requireAuth, async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
   try {
-    const absPath = resolvePath(req.user.scope, urlPath);
-    const stat = statSafe(absPath);
+    const absPath = await resolvePath(req.user.scope, urlPath);
+    const stat = await statSafe(absPath);
     if (!stat) return res.status(404).json({ error: 'Not found' });
 
     const wantsEncoding = req.headers['x-encoding'] === 'true';
     const checksum = req.query.checksum;
 
-    const info = buildFileInfo(absPath, urlPath, {
+    const info = await buildFileInfo(absPath, urlPath, {
       expand: stat.isDirectory(),
       content: !stat.isDirectory() && req.user.perm.download,
       sorting: req.user.sorting,
@@ -51,31 +45,27 @@ router.get('/*', requireAuth, (req, res) => {
 
     // Filter items hidden from admin by users
     if (stat.isDirectory() && info.items && req.user.perm.admin) {
-      const db = require('../db').getDb();
-      // Load all hidden items with their owner's scope
-      const hiddenRows = db.prepare(`
-        SELECT ui.item_path, u.scope
-        FROM user_items ui
-        JOIN users u ON u.id = ui.user_id
-        WHERE ui.show_to_admin = 0
-      `).all();
+      try {
+        const hiddenRows = await UserItem.find({ show_to_admin: 0 });
+        const userIds = hiddenRows.map(r => r.user_id);
+        const users = await User.find({ id: { $in: userIds } });
+        const userMap = new Map(users.map(u => [u.id, u.scope]));
 
-      // Build a set of absolute-style paths as admin would see them
-      const hiddenPaths = new Set()
-      for (const row of hiddenRows) {
-        // scope e.g. '/alice', item_path e.g. '/myfolder/'
-        const scope = row.scope.replace(/\/$/, '')
-        const ipath = row.item_path.replace(/\/$/, '')
-        // What admin sees: scope + item_path  e.g. '/alice/myfolder'
-        hiddenPaths.add((scope + ipath).replace(/\/$/, '') || '/')
-        // Also store raw item_path in case admin scope is '/'
-        hiddenPaths.add(ipath)
+        const hiddenPaths = new Set();
+        for (const row of hiddenRows) {
+          const scope = (userMap.get(row.user_id) || '').replace(/\/$/, '');
+          const ipath = row.item_path.replace(/\/$/, '');
+          hiddenPaths.add((scope + ipath).replace(/\/$/, '') || '/');
+          hiddenPaths.add(ipath);
+        }
+
+        info.items = info.items.filter(item => {
+          const normalised = item.path.replace(/\/$/, '');
+          return !hiddenPaths.has(normalised);
+        });
+      } catch (err) {
+        console.error('Failed to filter hidden items for admin:', err);
       }
-
-      info.items = info.items.filter(item => {
-        const normalised = item.path.replace(/\/$/, '')
-        return !hiddenPaths.has(normalised)
-      })
     }
 
     // If asking for text content as raw bytes
@@ -83,9 +73,13 @@ router.get('/*', requireAuth, (req, res) => {
       if (!req.user.perm.download) return res.status(202).end();
       if (info.type !== 'text') return res.json(info);
 
-      const data = fs.readFileSync(absPath);
+      const fileObj = await s3.send(new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath
+      }));
+      const data = await fileObj.Body.transformToByteArray();
       res.setHeader('Content-Type', 'application/octet-stream');
-      return res.send(data);
+      return res.send(Buffer.from(data));
     }
 
     if (checksum) {
@@ -93,9 +87,14 @@ router.get('/*', requireAuth, (req, res) => {
       const algo = algos[checksum.toLowerCase()];
       if (!algo) return res.status(400).json({ error: 'Invalid checksum algorithm' });
 
+      const fileObj = await s3.send(new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath
+      }));
+      const data = await fileObj.Body.transformToByteArray();
       const crypto = require('crypto');
       const hash = crypto.createHash(algo);
-      hash.update(fs.readFileSync(absPath));
+      hash.update(Buffer.from(data));
       info.checksums = { [checksum]: hash.digest('hex') };
       delete info.content; // save bandwidth
     }
@@ -116,42 +115,53 @@ router.post('/*', requireAuth, upload.single('file'), async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
 
   try {
-    const absPath = resolvePath(req.user.scope, urlPath);
+    const absPath = await resolvePath(req.user.scope, urlPath);
 
     // Directory creation
     if (urlPath.endsWith('/')) {
-      await fse.ensureDir(absPath);
+      const s3Prefix = absPath.endsWith('/') ? absPath : absPath + '/';
+      await s3.send(new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: s3Prefix,
+        Body: ''
+      }));
       return res.status(200).json({ message: 'Directory created' });
     }
 
     // File upload
     const override = req.query.override === 'true';
-    if (fs.existsSync(absPath) && !override) {
+    const exists = await statSafe(absPath);
+    if (exists && !override) {
       return res.status(409).json({ error: 'File already exists. Use ?override=true to overwrite.' });
     }
 
-    if (fs.existsSync(absPath) && !req.user.perm.modify) {
+    if (exists && !req.user.perm.modify) {
       return res.status(403).json({ error: 'Modify permission denied' });
     }
 
-    await fse.ensureDir(path.dirname(absPath));
-
     if (req.file) {
       // Uploaded via multipart
-      await fse.writeFile(absPath, req.file.buffer);
+      await s3.send(new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath,
+        Body: req.file.buffer
+      }));
     } else {
-      // Raw body stream
-      await new Promise((resolve, reject) => {
-        const out = fs.createWriteStream(absPath);
-        req.pipe(out);
-        out.on('finish', resolve);
-        out.on('error', reject);
-        req.on('error', reject);
+      // Raw body stream upload using @aws-sdk/lib-storage Upload wrapper
+      const { Upload } = require('@aws-sdk/lib-storage');
+      const uploadStream = new Upload({
+        client: s3,
+        params: {
+          Bucket: BUCKET_NAME,
+          Key: absPath,
+          Body: req
+        }
       });
+      await uploadStream.done();
     }
 
-    const stat = fs.statSync(absPath);
-    const etag = `"${stat.mtimeMs.toString(16)}${stat.size.toString(16)}"`;
+    const stat = await statSafe(absPath);
+    const etag = `"${stat.mtime.getTime().toString(16)}${stat.size.toString(16)}"`;
     res.setHeader('ETag', etag);
     return res.status(200).json({ message: 'File uploaded' });
   } catch (err) {
@@ -172,25 +182,33 @@ router.put('/*', requireAuth, upload.single('file'), async (req, res) => {
   }
 
   try {
-    const absPath = resolvePath(req.user.scope, urlPath);
-    if (!fs.existsSync(absPath)) {
+    const absPath = await resolvePath(req.user.scope, urlPath);
+    const exists = await statSafe(absPath);
+    if (!exists) {
       return res.status(404).json({ error: 'File not found' });
     }
 
     if (req.file) {
-      await fse.writeFile(absPath, req.file.buffer);
+      await s3.send(new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath,
+        Body: req.file.buffer
+      }));
     } else {
-      await new Promise((resolve, reject) => {
-        const out = fs.createWriteStream(absPath);
-        req.pipe(out);
-        out.on('finish', resolve);
-        out.on('error', reject);
-        req.on('error', reject);
+      const { Upload } = require('@aws-sdk/lib-storage');
+      const uploadStream = new Upload({
+        client: s3,
+        params: {
+          Bucket: BUCKET_NAME,
+          Key: absPath,
+          Body: req
+        }
       });
+      await uploadStream.done();
     }
 
-    const stat = fs.statSync(absPath);
-    const etag = `"${stat.mtimeMs.toString(16)}${stat.size.toString(16)}"`;
+    const stat = await statSafe(absPath);
+    const etag = `"${stat.mtime.getTime().toString(16)}${stat.size.toString(16)}"`;
     res.setHeader('ETag', etag);
     return res.status(200).json({ message: 'File updated' });
   } catch (err) {
@@ -211,20 +229,44 @@ router.delete('/*', requireAuth, async (req, res) => {
   }
 
   try {
-    const absPath = resolvePath(req.user.scope, urlPath);
-    if (!fs.existsSync(absPath)) {
+    const absPath = await resolvePath(req.user.scope, urlPath);
+    const stat = await statSafe(absPath);
+    if (!stat) {
       return res.status(404).json({ error: 'Not found' });
     }
 
     // Remove associated shares
-    const db = require('../db').getDb();
-    db.prepare('DELETE FROM shares WHERE path LIKE ?').run(urlPath + '%');
+    const pathEscaped = urlPath.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    await Share.deleteMany({ path: new RegExp('^' + pathEscaped) });
 
     // Remove associated global folders
-    db.prepare('DELETE FROM global_folders WHERE folder_path = ? OR folder_path LIKE ?')
-      .run(urlPath, urlPath + '/%');
+    await GlobalFolder.deleteMany({
+      $or: [
+        { folder_path: urlPath },
+        { folder_path: new RegExp('^' + (urlPath + '/').replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')) }
+      ]
+    });
 
-    await fse.remove(absPath);
+    if (stat.isDirectory()) {
+      // List and delete S3 prefix keys recursively
+      const prefix = absPath.endsWith('/') ? absPath : absPath + '/';
+      const data = await s3.send(new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: prefix
+      }));
+      for (const item of (data.Contents || [])) {
+        await s3.send(new DeleteObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: item.Key
+        }));
+      }
+    } else {
+      await s3.send(new DeleteObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath
+      }));
+    }
+
     return res.status(204).end();
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
@@ -251,40 +293,40 @@ router.patch('/*', requireAuth, async (req, res) => {
   }
 
   try {
-    const srcAbs = resolvePath(req.user.scope, urlPath);
-    let dstAbs = resolvePath(req.user.scope, dstUrlPath);
+    const srcAbs = await resolvePath(req.user.scope, urlPath);
+    let dstAbs = await resolvePath(req.user.scope, dstUrlPath);
 
-    if (!fs.existsSync(srcAbs)) {
+    const stat = await statSafe(srcAbs);
+    if (!stat) {
       return res.status(404).json({ error: 'Source not found' });
     }
 
     if (action === 'copy') {
       if (!req.user.perm.create) return res.status(403).json({ error: 'Create permission denied' });
-      if (!override && !rename && fs.existsSync(dstAbs)) {
+      const destExists = await statSafe(dstAbs);
+      if (!override && !rename && destExists) {
         return res.status(409).json({ error: 'Destination already exists' });
       }
-      if (rename) dstAbs = addVersionSuffix(dstAbs);
+      if (rename) dstAbs = await addVersionSuffix(dstAbs);
       await copyPath(srcAbs, dstAbs);
     } else if (action === 'rename') {
       if (!req.user.perm.rename) return res.status(403).json({ error: 'Rename permission denied' });
-      if (!override && !rename && fs.existsSync(dstAbs)) {
+      const destExists = await statSafe(dstAbs);
+      if (!override && !rename && destExists) {
         return res.status(409).json({ error: 'Destination already exists' });
       }
-      if (rename) dstAbs = addVersionSuffix(dstAbs);
+      if (rename) dstAbs = await addVersionSuffix(dstAbs);
       await movePath(srcAbs, dstAbs);
 
       // Update global folders paths in DB
-      const db = require('../db').getDb();
-      const rows = db.prepare('SELECT id, folder_path FROM global_folders').all();
+      const rows = await GlobalFolder.find({});
       for (const row of rows) {
         if (row.folder_path === urlPath) {
-          db.prepare('UPDATE global_folders SET folder_path = ? WHERE id = ?')
-            .run(dstUrlPath, row.id);
+          await GlobalFolder.updateOne({ id: row.id }, { $set: { folder_path: dstUrlPath } });
         } else if (row.folder_path.startsWith(urlPath + '/')) {
           const remaining = row.folder_path.slice(urlPath.length);
           const newPath = dstUrlPath + remaining;
-          db.prepare('UPDATE global_folders SET folder_path = ? WHERE id = ?')
-            .run(newPath, row.id);
+          await GlobalFolder.updateOne({ id: row.id }, { $set: { folder_path: newPath } });
         }
       }
     } else {
@@ -299,15 +341,15 @@ router.patch('/*', requireAuth, async (req, res) => {
 });
 
 // GET /api/resources/recursive/* — flat recursive listing
-router.get('/recursive/*', requireAuth, (req, res) => {
+router.get('/recursive/*', requireAuth, async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
   try {
-    const absPath = resolvePath(req.user.scope, urlPath);
-    const stat = statSafe(absPath);
+    const absPath = await resolvePath(req.user.scope, urlPath);
+    const stat = await statSafe(absPath);
     if (!stat) return res.status(404).json({ error: 'Not found' });
     if (!stat.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
 
-    const entries = walkDir(absPath, urlPath);
+    const entries = await walkDir(absPath, urlPath);
     return res.json(entries);
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
