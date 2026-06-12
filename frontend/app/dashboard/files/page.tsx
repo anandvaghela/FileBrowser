@@ -384,7 +384,7 @@ export default function FilesPage() {
   }
 
   const handleDownload = (item: any) => {
-    const url = rawUrl(item.path)
+    const url = rawUrl(item.path, true)
     const a = document.createElement('a')
     a.href = url
     a.download = item.name

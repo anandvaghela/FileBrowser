@@ -72,9 +72,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { label: 'My Files', icon: FolderOpen, href: '/dashboard/files', active: isFilesPage },
-    { label: 'Shared', icon: Users, href: '/dashboard/shared', active: isSharedPage },
     { label: 'New Folder', icon: FolderPlus, action: 'new-folder' },
     { label: 'New File', icon: FilePlus, action: 'upload' },
+    { label: 'Shared', icon: Users, href: '/dashboard/shared', active: isSharedPage },
     { label: 'Settings', icon: Settings, href: '/dashboard/settings', active: isSettingsPage },
   ]
 

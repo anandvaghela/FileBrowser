@@ -96,8 +96,10 @@ export const resourcesApi = {
 }
 
 // ── Raw download ──────────────────────────────────────────────────────────────
-export const rawUrl = (path: string) =>
-  `${API_URL}/api/raw${path}?token=${Cookies.get('fb_token') || localStorage.getItem('fb_token')}`
+export const rawUrl = (path: string, download = false) => {
+  const token = Cookies.get('fb_token') || localStorage.getItem('fb_token')
+  return `${API_URL}/api/raw${path}?token=${token}${download ? '&inline=false' : ''}`
+}
 
 export const previewUrl = (path: string, size = 'medium') =>
   `${API_URL}/api/preview/${size}${path}?token=${Cookies.get('fb_token') || localStorage.getItem('fb_token')}`
@@ -139,6 +141,9 @@ export const userSharesApi = {
   remove: (item_path: string, shared_with: number) =>
     api.delete('/user-shares', { data: { item_path, shared_with } }),
   sharedWithMe: () => api.get('/user-shares/shared-with-me'),
+  myShares: () => api.get('/user-shares/my-shares'),
+  updatePermission: (item_path: string, shared_with: number, can_write: boolean) =>
+    api.patch('/user-shares', { item_path, shared_with, can_write }),
 }
 
 // ── Shared Resources ───────────────────────────────────────────────────────────

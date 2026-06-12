@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { X, Users, Search, Check, Trash2 } from 'lucide-react'
+import { X, Users, Search, Check, Trash2, ChevronDown } from 'lucide-react'
 import { usersApi, userSharesApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import Button from '@/components/ui/Button'
@@ -8,8 +8,7 @@ import Button from '@/components/ui/Button'
 export default function ShareWithUsersModal({ file, onClose }: { file: any; onClose: () => void }) {
   const [users, setUsers] = useState<any[]>([])
   const [existingShares, setExistingShares] = useState<any[]>([])
-  const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [canWrite, setCanWrite] = useState(false)
+  const [selected, setSelected] = useState<Map<number, boolean>>(new Map())
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -24,7 +23,9 @@ export default function ShareWithUsersModal({ file, onClose }: { file: any; onCl
         setUsers(usersRes.data)
         const shares = sharesRes.data.shares || []
         setExistingShares(shares)
-        setSelected(new Set(shares.map((s: any) => s.shared_with)))
+        const map = new Map<number, boolean>()
+        shares.forEach((s: any) => map.set(s.shared_with, !!s.can_write))
+        setSelected(map)
       } catch { toast.error('Failed to load users') }
       finally { setLoading(false) }
     }
@@ -35,30 +36,46 @@ export default function ShareWithUsersModal({ file, onClose }: { file: any; onCl
     u.username.toLowerCase().includes(search.toLowerCase())
   )
 
-  const toggleUser = (id: number) => {
+  const toggleSelect = (id: number) => {
     setSelected(prev => {
-      const n = new Set(prev)
-      n.has(id) ? n.delete(id) : n.add(id)
+      const n = new Map(prev)
+      if (n.has(id)) n.delete(id)
+      else n.set(id, false)
       return n
     })
   }
 
-  const removeShare = async (sharedWith: number) => {
+  const setPermission = (id: number, canWrite: boolean, e: React.ChangeEvent<HTMLSelectElement>) => {
+    e.stopPropagation()
+    setSelected(prev => {
+      const n = new Map(prev)
+      n.set(id, canWrite)
+      return n
+    })
+  }
+
+  const removeShare = async (sharedWith: number, e: React.MouseEvent) => {
+    e.stopPropagation()
     try {
       await userSharesApi.remove(file.path, sharedWith)
       setExistingShares(prev => prev.filter(s => s.shared_with !== sharedWith))
-      setSelected(prev => { const n = new Set(prev); n.delete(sharedWith); return n })
+      setSelected(prev => { const n = new Map(prev); n.delete(sharedWith); return n })
       toast.success('Access removed')
     } catch { toast.error('Failed to remove') }
   }
 
   const save = async () => {
-    const newIds = [...selected].filter(id => !existingShares.find(s => s.shared_with === id))
-    if (newIds.length === 0) { onClose(); return }
+    if (selected.size === 0) { onClose(); return }
     setSaving(true)
     try {
-      await userSharesApi.share(file.path, newIds, canWrite)
-      toast.success(`Shared with ${newIds.length} user${newIds.length > 1 ? 's' : ''}`)
+      const entries = Array.from(selected.entries())
+      const viewOnly = entries.filter(([, cw]) => !cw).map(([id]) => id)
+      const canEdit = entries.filter(([, cw]) => cw).map(([id]) => id)
+      const calls = []
+      if (viewOnly.length) calls.push(userSharesApi.share(file.path, viewOnly, false))
+      if (canEdit.length) calls.push(userSharesApi.share(file.path, canEdit, true))
+      await Promise.all(calls)
+      toast.success(`Shared with ${selected.size} user${selected.size > 1 ? 's' : ''}`)
       onClose()
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Failed to share')
@@ -71,7 +88,7 @@ export default function ShareWithUsersModal({ file, onClose }: { file: any; onCl
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#e8eaed]">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-primary-500" />
-            <h2 className="font-bold text-gray-800 text-[15px]">Share "{file.name}" with users</h2>
+            <h2 className="font-bold text-gray-800 text-[15px]">Share "{file.name}"</h2>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 focus:outline-none">
             <X className="w-5 h-5" />
@@ -92,46 +109,66 @@ export default function ShareWithUsersModal({ file, onClose }: { file: any; onCl
           </div>
 
           {/* User list */}
-          <div className="max-h-52 overflow-y-auto space-y-1 border border-gray-100 rounded-lg p-2">
+          <div className="max-h-60 overflow-y-auto space-y-1 border border-gray-100 rounded-lg p-2">
             {loading ? (
               <div className="py-6 text-center text-sm text-gray-400">Loading...</div>
             ) : filtered.length === 0 ? (
               <div className="py-6 text-center text-sm text-gray-400">No users found</div>
             ) : filtered.map(u => {
-              const isShared = existingShares.find(s => s.shared_with === u.id)
               const isSel = selected.has(u.id)
+              const canWrite = selected.get(u.id) ?? false
+              const isExisting = !!existingShares.find(s => s.shared_with === u.id)
+
               return (
-                <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer" onClick={() => !isShared && toggleUser(u.id)}>
-                  <div className="flex items-center gap-3">
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${isSel ? 'bg-primary-500 border-primary-500' : 'border-gray-300'}`}>
+                <div
+                  key={u.id}
+                  className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer select-none"
+                  onClick={() => toggleSelect(u.id)}
+                >
+                  {/* Left: checkbox + avatar + name */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${isSel ? 'bg-primary-500 border-primary-500' : 'border-gray-300'}`}>
                       {isSel && <Check className="w-3 h-3 text-white" />}
                     </div>
-                    <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-600">
+                    <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-600 flex-shrink-0">
                       {u.username[0].toUpperCase()}
                     </div>
-                    <span className="text-sm font-medium text-gray-700">{u.username}</span>
-                    {isShared && <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">shared</span>}
+                    <span className="text-sm font-medium text-gray-700 truncate">{u.username}</span>
                   </div>
-                  {isShared && (
-                    <button onClick={e => { e.stopPropagation(); removeShare(u.id) }} className="p-1 text-gray-400 hover:text-red-500 transition-colors focus:outline-none">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+
+                  {/* Right: permission dropdown + remove */}
+                  <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                    {isSel && (
+                      <div className="relative" onClick={e => e.stopPropagation()}>
+                        <select
+                          value={canWrite ? 'edit' : 'view'}
+                          onChange={e => setPermission(u.id, e.target.value === 'edit', e as any)}
+                          className={`appearance-none text-[11px] font-semibold pl-2 pr-6 py-1 rounded-lg border cursor-pointer focus:outline-none transition-colors ${
+                            canWrite
+                              ? 'bg-green-50 text-green-700 border-green-200 focus:border-green-400'
+                              : 'bg-amber-50 text-amber-700 border-amber-200 focus:border-amber-400'
+                          }`}
+                        >
+                          <option value="view">👁 View only</option>
+                          <option value="edit">✏️ Can edit</option>
+                        </select>
+                        <ChevronDown className={`pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 ${canWrite ? 'text-green-500' : 'text-amber-500'}`} />
+                      </div>
+                    )}
+                    {isExisting && (
+                      <button
+                        onClick={(e) => removeShare(u.id, e)}
+                        className="p-1 text-gray-300 hover:text-red-500 transition-colors focus:outline-none ml-0.5"
+                        title="Remove access"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )
             })}
           </div>
-
-          {/* Can write toggle */}
-          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={canWrite}
-              onChange={e => setCanWrite(e.target.checked)}
-              className="w-4 h-4 text-primary-500 rounded"
-            />
-            <span>Allow selected users to upload/edit files</span>
-          </label>
 
           <div className="flex gap-3 pt-1">
             <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>

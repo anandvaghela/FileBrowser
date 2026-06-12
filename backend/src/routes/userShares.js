@@ -50,6 +50,44 @@ router.delete('/', requireAuth, (req, res) => {
   res.json({ message: 'Removed' });
 });
 
+// GET /api/user-shares/my-shares — items I have shared with others (grouped by item)
+router.get('/my-shares', requireAuth, (req, res) => {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT us.id, us.item_path, us.can_write, us.shared_with, u.username as shared_with_name
+    FROM user_shares us
+    JOIN users u ON u.id = us.shared_with
+    WHERE us.owner_id = ?
+    ORDER BY us.item_path, u.username
+  `).all(req.user.id);
+
+  // Group by item_path
+  const map = new Map();
+  for (const row of rows) {
+    if (!map.has(row.item_path)) {
+      map.set(row.item_path, { item_path: row.item_path, users: [] });
+    }
+    map.get(row.item_path).users.push({
+      id: row.id,
+      shared_with: row.shared_with,
+      username: row.shared_with_name,
+      can_write: !!row.can_write
+    });
+  }
+
+  res.json({ shares: Array.from(map.values()) });
+});
+
+// PATCH /api/user-shares — update permission for an existing share
+router.patch('/', requireAuth, (req, res) => {
+  const { item_path, shared_with, can_write } = req.body;
+  if (!item_path || !shared_with) return res.status(400).json({ error: 'item_path and shared_with required' });
+  const db = getDb();
+  db.prepare('UPDATE user_shares SET can_write = ? WHERE item_path = ? AND owner_id = ? AND shared_with = ?')
+    .run(can_write ? 1 : 0, item_path, req.user.id, shared_with);
+  res.json({ message: 'Updated' });
+});
+
 // GET /api/user-shares/shared-with-me — items shared with the current user
 router.get('/shared-with-me', requireAuth, (req, res) => {
   const db = getDb();

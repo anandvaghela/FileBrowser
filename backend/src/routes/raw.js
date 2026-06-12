@@ -62,7 +62,12 @@ router.get('/*', requireAuth, async (req, res) => {
     } else {
       const mimeType = mime.lookup(absPath) || 'application/octet-stream';
       const name = path.basename(absPath);
-      const disposition = inline ? 'inline' : `attachment; filename="${name}"`;
+
+      // Types that browsers can display inline — default to inline unless ?inline=false
+      const inlineTypes = ['application/pdf', 'image/', 'video/', 'audio/', 'text/'];
+      const browserCanDisplay = inlineTypes.some(t => mimeType.startsWith(t));
+      const forceDownload = req.query.inline === 'false';
+      const disposition = (!forceDownload && browserCanDisplay) ? 'inline' : `attachment; filename="${name}"`;
 
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Disposition', disposition);

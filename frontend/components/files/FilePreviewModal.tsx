@@ -49,6 +49,12 @@ export default function FilePreviewModal({
   const isPdf = file.type === 'pdf'
   const isText = file.type === 'text'
 
+  const ext = file.name?.split('.').pop()?.toLowerCase() || ''
+  const isOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'csv'].includes(ext)
+  // For office & pdf fallback: Google Docs Viewer needs a publicly accessible URL — we pass the raw URL
+  const rawFileUrl = rawUrl(file.path)
+  const rawDownloadUrl = rawUrl(file.path, true)
+
   useEffect(() => {
     if (isText) {
       setLoading(true)
@@ -118,7 +124,7 @@ export default function FilePreviewModal({
             <button onClick={onDownload} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
               <Download className="w-4 h-4" />
             </button>
-            <a href={rawUrl(file.path)} target="_blank" rel="noreferrer"
+            <a href={rawDownloadUrl} target="_blank" rel="noreferrer"
               className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
               <ExternalLink className="w-4 h-4" />
             </a>
@@ -177,8 +183,18 @@ export default function FilePreviewModal({
           {isPdf && (
             <div className="w-full h-full flex flex-col p-4">
               <iframe
-                src={rawUrl(file.path)}
-                className="flex-1 rounded-lg border border-[#e8eaed] min-h-[50vh] bg-white"
+                src={rawFileUrl}
+                className="flex-1 rounded-lg border border-[#e8eaed] min-h-[60vh] bg-white"
+                title={file.name}
+              />
+            </div>
+          )}
+
+          {isOffice && (
+            <div className="w-full h-full flex flex-col p-4">
+              <iframe
+                src={`https://docs.google.com/viewer?url=${encodeURIComponent(rawFileUrl)}&embedded=true`}
+                className="flex-1 rounded-lg border border-[#e8eaed] min-h-[60vh] bg-white"
                 title={file.name}
               />
             </div>
@@ -205,7 +221,7 @@ export default function FilePreviewModal({
             </div>
           )}
 
-          {!isImage && !isVideo && !isAudio && !isPdf && !isText && (
+          {!isImage && !isVideo && !isAudio && !isPdf && !isText && !isOffice && (
             <div className="text-center p-12">
               <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center mx-auto mb-4 border border-[#e8eaed]">
                 <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
