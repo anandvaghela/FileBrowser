@@ -246,7 +246,7 @@ function FilesPageContent() {
       setSearching(true)
       try {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/search${currentPath}?query=${encodeURIComponent(searchQuery)}`,
+          `${process.env.NEXT_PUBLIC_API_URL || 'https://filebrowser-server.onrender.com'}/api/search${currentPath}?query=${encodeURIComponent(searchQuery)}`,
           { headers: { Authorization: `Bearer ${localStorage.getItem('fb_token')}` } }
         )
         const text = await res.text()

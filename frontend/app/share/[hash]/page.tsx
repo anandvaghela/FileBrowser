@@ -9,7 +9,7 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 
 // Separate public axios instance — no auth interceptor so 401 won't trigger logout
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://filebrowser-server.onrender.com'
 const publicApi = axios.create({ baseURL: `${API_URL}/api`, timeout: 30000 })
 
 const publicSharesApi = {
