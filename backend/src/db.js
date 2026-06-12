@@ -19,7 +19,7 @@ async function getNextSequenceValue(sequenceName) {
   const sequenceDocument = await Counter.findByIdAndUpdate(
     sequenceName,
     { $inc: { seq: 1 } },
-    { new: true, upsert: true }
+    { returnDocument: 'after', upsert: true }
   );
   return sequenceDocument.seq;
 }
@@ -211,6 +211,28 @@ async function seedDb() {
       console.log('[MongoDB] Default admin user created: admin / admin');
       console.log('[MongoDB] IMPORTANT: Change the default password immediately!');
     }
+
+    // Synchronize auto-increment counters for all collections
+    const collectionsToSync = [
+      { model: User, seqName: 'users' },
+      { model: Share, seqName: 'shares' },
+      { model: GlobalFolder, seqName: 'global_folders' },
+      { model: UserItem, seqName: 'user_items' },
+      { model: UserShare, seqName: 'user_shares' }
+    ];
+
+    for (const item of collectionsToSync) {
+      const maxDoc = await item.model.findOne().sort({ id: -1 });
+      const maxId = maxDoc ? maxDoc.id : 0;
+      if (maxId > 0) {
+        await Counter.findByIdAndUpdate(
+          item.seqName,
+          { $max: { seq: maxId } },
+          { upsert: true }
+        );
+      }
+    }
+    console.log('[MongoDB] Auto-increment counters synchronized');
   } catch (err) {
     console.error('[MongoDB] Seed error:', err);
   }

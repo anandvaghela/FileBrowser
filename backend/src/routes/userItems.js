@@ -25,11 +25,13 @@ router.post('/', requireAuth, async (req, res) => {
   if (!item_path) return res.status(400).json({ error: 'item_path required' });
 
   try {
-    await UserItem.updateOne(
-      { user_id: req.user.id, item_path },
-      { $set: { show_to_admin: show_to_admin ? 1 : 0 } },
-      { upsert: true }
-    );
+    let doc = await UserItem.findOne({ user_id: req.user.id, item_path });
+    if (!doc) {
+      doc = new UserItem({ user_id: req.user.id, item_path, show_to_admin: show_to_admin ? 1 : 0 });
+    } else {
+      doc.show_to_admin = show_to_admin ? 1 : 0;
+    }
+    await doc.save();
     res.json({ message: 'Updated' });
   } catch (err) {
     res.status(500).json({ error: err.message });

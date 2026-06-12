@@ -22,11 +22,13 @@ router.post('/', requireAdmin, async (req, res) => {
   if (!folder_path) return res.status(400).json({ error: 'folder_path required' });
 
   try {
-    await GlobalFolder.updateOne(
-      { folder_path },
-      { $set: { created_by: req.user.id } },
-      { upsert: true }
-    );
+    let doc = await GlobalFolder.findOne({ folder_path });
+    if (!doc) {
+      doc = new GlobalFolder({ folder_path, created_by: req.user.id });
+    } else {
+      doc.created_by = req.user.id;
+    }
+    await doc.save();
     res.json({ message: 'Folder made global' });
   } catch (err) {
     res.status(500).json({ error: err.message });

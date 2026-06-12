@@ -37,11 +37,13 @@ router.post('/', requireAuth, async (req, res) => {
 
   try {
     for (const uid of user_ids) {
-      await UserShare.updateOne(
-        { item_path, owner_id: req.user.id, shared_with: uid },
-        { $set: { can_write: can_write ? 1 : 0 } },
-        { upsert: true }
-      );
+      let doc = await UserShare.findOne({ item_path, owner_id: req.user.id, shared_with: uid });
+      if (!doc) {
+        doc = new UserShare({ item_path, owner_id: req.user.id, shared_with: uid, can_write: can_write ? 1 : 0 });
+      } else {
+        doc.can_write = can_write ? 1 : 0;
+      }
+      await doc.save();
     }
     res.json({ message: 'Shared' });
   } catch (err) {

@@ -109,6 +109,33 @@ async function statSafe(key) {
     } catch (e) {
       // ignore
     }
+
+    // Fallback: If it matches a user's scope or is a global folder, treat it as a directory
+    try {
+      const scopeKey = '/' + key.replace(/\/$/, '');
+      const { User, GlobalFolder } = require('../db');
+
+      const userExists = await User.findOne({ scope: scopeKey });
+      if (userExists) {
+        return {
+          isDirectory: () => true,
+          size: 0,
+          mtime: new Date(),
+        };
+      }
+
+      const globalExists = await GlobalFolder.findOne({ folder_path: scopeKey });
+      if (globalExists) {
+        return {
+          isDirectory: () => true,
+          size: 0,
+          mtime: new Date(),
+        };
+      }
+    } catch (e) {
+      // ignore
+    }
+
     return null;
   }
 }
