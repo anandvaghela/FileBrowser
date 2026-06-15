@@ -73,8 +73,8 @@ export default function FilePreviewModal({
   }, [file.path, isText, token])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-xl shadow-modal w-full max-w-4xl max-h-[90vh] flex flex-col animate-slide-up border border-[#e8eaed]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4 animate-fade-in">
+      <div className="bg-white sm:rounded-xl shadow-modal w-full sm:max-w-4xl max-h-[95vh] sm:max-h-[90vh] flex flex-col animate-slide-up border-t sm:border border-[#e8eaed] rounded-t-2xl sm:rounded-xl">
         {/* Header */}
         <div className="flex items-center gap-3 px-6 py-4 border-b border-[#e8eaed] flex-shrink-0">
           <div className="flex-1 min-w-0">
