@@ -10,6 +10,29 @@ const { GetObjectCommand } = require('@aws-sdk/client-s3');
 
 const router = express.Router();
 
+// Require auth for all raw router paths to populate req.user
+router.use(requireAuth);
+
+// Block users whose scope is outside userHomeBase from accessing userHomeBase directly
+router.use(async (req, res, next) => {
+  const resourcePath = '/' + req.path.replace(/^\//, '');
+
+  const { Settings } = require('../db');
+  try {
+    const settings = await Settings.findOne({ id: 1 });
+    const userHomeBase = (settings ? settings.user_home_base : '/users').replace(/\/$/, '');
+    const userScope = req.user.scope.replace(/\/$/, '');
+    const isScopeUnderBase = userScope === userHomeBase || userScope.startsWith(userHomeBase + '/');
+    const cleanUrlPath = resourcePath.replace(/\/$/, '');
+    if (!isScopeUnderBase && (cleanUrlPath === userHomeBase || cleanUrlPath.startsWith(userHomeBase + '/'))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+  } catch (err) {
+    console.error('Error in user home base restriction middleware:', err);
+  }
+  next();
+});
+
 async function getShareAccess(userId, itemPath) {
   try {
     const { UserShare, User } = require('../db');

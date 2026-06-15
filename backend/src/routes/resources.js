@@ -26,6 +26,32 @@ const upload = multer({
   limits: { fileSize: parseInt(process.env.MAX_UPLOAD_SIZE || '10737418240') },
 });
 
+// Require auth for all resource router paths to populate req.user
+router.use(requireAuth);
+
+// Block users whose scope is outside userHomeBase from accessing userHomeBase directly
+router.use(async (req, res, next) => {
+  let resourcePath = '/' + req.path.replace(/^\//, '');
+  if (resourcePath.startsWith('/recursive/')) {
+    resourcePath = '/' + resourcePath.slice('/recursive/'.length).replace(/^\//, '');
+  }
+
+  const { Settings } = require('../db');
+  try {
+    const settings = await Settings.findOne({ id: 1 });
+    const userHomeBase = (settings ? settings.user_home_base : '/users').replace(/\/$/, '');
+    const userScope = req.user.scope.replace(/\/$/, '');
+    const isScopeUnderBase = userScope === userHomeBase || userScope.startsWith(userHomeBase + '/');
+    const cleanUrlPath = resourcePath.replace(/\/$/, '');
+    if (!isScopeUnderBase && (cleanUrlPath === userHomeBase || cleanUrlPath.startsWith(userHomeBase + '/'))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+  } catch (err) {
+    console.error('Error in user home base restriction middleware:', err);
+  }
+  next();
+});
+
 // GET /api/resources/*  — list directory or get file info
 router.get('/*', requireAuth, async (req, res) => {
   const urlPath = '/' + (req.params[0] || '');
@@ -43,28 +69,44 @@ router.get('/*', requireAuth, async (req, res) => {
       sorting: req.user.sorting,
     });
 
-    // Filter items hidden from admin by users
-    if (stat.isDirectory() && info.items && req.user.perm.admin) {
+    // Filter items hidden from admin by users, and filter out userHomeBase for users whose scope is outside it
+    if (stat.isDirectory() && info.items) {
       try {
-        const hiddenRows = await UserItem.find({ show_to_admin: 0 });
-        const userIds = hiddenRows.map(r => r.user_id);
-        const users = await User.find({ id: { $in: userIds } });
-        const userMap = new Map(users.map(u => [u.id, u.scope]));
-
-        const hiddenPaths = new Set();
-        for (const row of hiddenRows) {
-          const scope = (userMap.get(row.user_id) || '').replace(/\/$/, '');
-          const ipath = row.item_path.replace(/\/$/, '');
-          hiddenPaths.add((scope + ipath).replace(/\/$/, '') || '/');
-          hiddenPaths.add(ipath);
-        }
+        const { Settings } = require('../db');
+        const settings = await Settings.findOne({ id: 1 });
+        const userHomeBase = (settings ? settings.user_home_base : '/users').replace(/\/$/, '');
+        const userScope = req.user.scope.replace(/\/$/, '');
+        const isScopeUnderBase = userScope === userHomeBase || userScope.startsWith(userHomeBase + '/');
 
         info.items = info.items.filter(item => {
-          const normalised = item.path.replace(/\/$/, '');
-          return !hiddenPaths.has(normalised);
+          const itemPath = item.path.replace(/\/$/, '');
+          if (!isScopeUnderBase && (itemPath === userHomeBase || itemPath.startsWith(userHomeBase + '/'))) {
+            return false;
+          }
+          return true;
         });
+
+        if (req.user.perm.admin) {
+          const hiddenRows = await UserItem.find({ show_to_admin: 0 });
+          const userIds = hiddenRows.map(r => r.user_id);
+          const users = await User.find({ id: { $in: userIds } });
+          const userMap = new Map(users.map(u => [u.id, u.scope]));
+
+          const hiddenPaths = new Set();
+          for (const row of hiddenRows) {
+            const scope = (userMap.get(row.user_id) || '').replace(/\/$/, '');
+            const ipath = row.item_path.replace(/\/$/, '');
+            hiddenPaths.add((scope + ipath).replace(/\/$/, '') || '/');
+            hiddenPaths.add(ipath);
+          }
+
+          info.items = info.items.filter(item => {
+            const normalised = item.path.replace(/\/$/, '');
+            return !hiddenPaths.has(normalised);
+          });
+        }
       } catch (err) {
-        console.error('Failed to filter hidden items for admin:', err);
+        console.error('Failed to filter items:', err);
       }
     }
 

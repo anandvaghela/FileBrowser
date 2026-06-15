@@ -9,6 +9,29 @@ const path = require('path');
 
 const router = express.Router();
 
+// Require auth for all search router paths to populate req.user
+router.use(requireAuth);
+
+// Block users whose scope is outside userHomeBase from accessing userHomeBase directly
+router.use(async (req, res, next) => {
+  const resourcePath = '/' + req.path.replace(/^\//, '');
+
+  const { Settings } = require('../db');
+  try {
+    const settings = await Settings.findOne({ id: 1 });
+    const userHomeBase = (settings ? settings.user_home_base : '/users').replace(/\/$/, '');
+    const userScope = req.user.scope.replace(/\/$/, '');
+    const isScopeUnderBase = userScope === userHomeBase || userScope.startsWith(userHomeBase + '/');
+    const cleanUrlPath = resourcePath.replace(/\/$/, '');
+    if (!isScopeUnderBase && (cleanUrlPath === userHomeBase || cleanUrlPath.startsWith(userHomeBase + '/'))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+  } catch (err) {
+    console.error('Error in user home base restriction middleware:', err);
+  }
+  next();
+});
+
 /**
  * GET /api/search/*?query=<q>
  *
@@ -57,8 +80,15 @@ router.get('/*', requireAuth, async (req, res) => {
   }
 
   let absRoot;
+  let userHomeBase = '/users';
+  let isScopeUnderBase = false;
   try {
     absRoot = await resolvePath(req.user.scope, urlPath);
+    const { Settings } = require('../db');
+    const settings = await Settings.findOne({ id: 1 });
+    userHomeBase = (settings ? settings.user_home_base : '/users').replace(/\/$/, '');
+    const userScope = req.user.scope.replace(/\/$/, '');
+    isScopeUnderBase = userScope === userHomeBase || userScope.startsWith(userHomeBase + '/');
   } catch (err) {
     return res.status(403).json({ error: err.message });
   }
@@ -137,6 +167,10 @@ router.get('/*', requireAuth, async (req, res) => {
 
         const relativeKey = item.Key.slice(prefix.length);
         const childUrl = (urlPath === '/' ? '' : urlPath) + '/' + relativeKey;
+
+        if (!isScopeUnderBase && (childUrl.replace(/\/$/, '') === userHomeBase || childUrl.replace(/\/$/, '').startsWith(userHomeBase + '/'))) {
+          continue;
+        }
 
         if (isOtherUserScope(childUrl)) {
           continue;
