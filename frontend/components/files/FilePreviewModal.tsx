@@ -76,30 +76,41 @@ export default function FilePreviewModal({
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4 animate-fade-in">
       <div className="bg-white sm:rounded-xl shadow-modal w-full sm:max-w-4xl max-h-[95vh] sm:max-h-[90vh] flex flex-col animate-slide-up border-t sm:border border-[#e8eaed] rounded-t-2xl sm:rounded-xl">
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-[#e8eaed] flex-shrink-0">
-          <div className="flex-1 min-w-0">
-            <h2 className="font-bold text-gray-800 text-[15px] truncate">{file.name}</h2>
-            <p className="text-[10px] text-gray-400 mt-0.5">
-              {formatBytes(file.size)} · Modified {formatDistanceToNow(new Date(file.modified), { addSuffix: true })}
-            </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-b border-[#e8eaed] flex-shrink-0">
+          <div className="flex items-start justify-between w-full sm:w-auto min-w-0 gap-4">
+            <div className="min-w-0 flex-1">
+              <h2 className="font-bold text-gray-800 text-[15px] truncate" title={file.name}>{file.name}</h2>
+              <p className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">
+                {formatBytes(file.size)} · Modified {formatDistanceToNow(new Date(file.modified), { addSuffix: true })}
+              </p>
+            </div>
+            {/* Close button on mobile */}
+            <button onClick={onClose} className="sm:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+
+          <div className="flex items-center gap-1.5 flex-wrap justify-start sm:justify-end w-full sm:w-auto">
             {isImage && (
               <>
                 <button onClick={() => setZoom(z => Math.min(z + 0.25, 3))}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
+                  title="Zoom In">
                   <ZoomIn className="w-4 h-4" />
                 </button>
                 <button onClick={() => setZoom(z => Math.max(z - 0.25, 0.25))}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
+                  title="Zoom Out">
                   <ZoomOut className="w-4 h-4" />
                 </button>
                 <button onClick={() => setZoom(1)}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
+                  title="Reset Zoom">
                   <RotateCcw className="w-4 h-4" />
                 </button>
               </>
             )}
+
             {isText && user?.perm?.modify && textContent !== originalContent && textContent !== null && (
               <button
                 onClick={handleSave}
@@ -112,28 +123,29 @@ export default function FilePreviewModal({
               </button>
             )}
             {onShare && (
-              <button onClick={onShare} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+              <button onClick={onShare} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none" title="Share">
                 <Share2 className="w-4 h-4" />
               </button>
             )}
             {onRename && (
-              <button onClick={onRename} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+              <button onClick={onRename} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none" title="Rename">
                 <Edit2 className="w-4 h-4" />
               </button>
             )}
-            <button onClick={onDownload} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+            <button onClick={onDownload} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none" title="Download">
               <Download className="w-4 h-4" />
             </button>
             <a href={rawDownloadUrl} target="_blank" rel="noreferrer"
-              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none">
+              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none" title="Open Original">
               <ExternalLink className="w-4 h-4" />
             </a>
             {onDelete && (
-              <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors focus:outline-none">
+              <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors focus:outline-none" title="Delete">
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors ml-1 focus:outline-none">
+            {/* Close button on desktop */}
+            <button onClick={onClose} className="hidden sm:block p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors ml-1 focus:outline-none" title="Close">
               <X className="w-4 h-4" />
             </button>
           </div>
