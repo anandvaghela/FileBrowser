@@ -7,6 +7,7 @@ const { UserShare, User } = require('../db');
 const { s3, BUCKET_NAME, resolvePath, statSafe, buildFileInfo, movePath } = require('../services/fileSystem');
 const { PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 const path = require('path');
+const { logActivity } = require('./activity');
 
 const router = express.Router();
 
@@ -88,6 +89,7 @@ router.post('/*', requireAuth, upload.single('file'), async (req, res) => {
         Key: s3Prefix,
         Body: ''
       }));
+      await logActivity(urlPath.replace(/\/$/, '') || '/', req.user, 'created_folder', 'Created folder in shared directory');
       return res.status(200).json({ message: 'Directory created' });
     }
 
@@ -110,7 +112,48 @@ router.post('/*', requireAuth, upload.single('file'), async (req, res) => {
       });
       await uploadStream.done();
     }
+    await logActivity(urlPath, req.user, 'uploaded', 'Uploaded file to shared directory');
     return res.status(200).json({ message: 'File uploaded' });
+  } catch (err) {
+    if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/shared-resources/* — update/overwrite inside shared folder (needs can_write)
+router.put('/*', requireAuth, upload.single('file'), async (req, res) => {
+  const urlPath = '/' + (req.params[0] || '');
+  const access = await getShareAccess(req.user.id, urlPath);
+  if (!access) return res.status(403).json({ error: 'No access' });
+  if (!access.can_write) return res.status(403).json({ error: 'Read-only access' });
+
+  try {
+    const absPath = await resolvePath(access.scope, urlPath);
+    const stat = await statSafe(absPath);
+    if (!stat) return res.status(404).json({ error: 'File not found' });
+    if (stat.isDirectory()) return res.status(400).json({ error: 'Cannot PUT to a directory' });
+
+    if (req.file) {
+      await s3.send(new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: absPath,
+        Body: req.file.buffer
+      }));
+    } else {
+      // Stream raw body
+      const { Upload } = require('@aws-sdk/lib-storage');
+      const uploadStream = new Upload({
+        client: s3,
+        params: {
+          Bucket: BUCKET_NAME,
+          Key: absPath,
+          Body: req
+        }
+      });
+      await uploadStream.done();
+    }
+    await logActivity(urlPath, req.user, 'edited an item', 'Updated shared file content');
+    return res.status(200).json({ message: 'File updated' });
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });
@@ -149,6 +192,7 @@ router.delete('/*', requireAuth, async (req, res) => {
       }));
     }
 
+    await logActivity(urlPath, req.user, 'deleted', `Deleted shared ${stat.isDirectory() ? 'folder' : 'file'}`);
     return res.status(204).end();
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
@@ -174,6 +218,9 @@ router.patch('/*', requireAuth, async (req, res) => {
     if (!stat) return res.status(404).json({ error: 'Source not found' });
 
     await movePath(srcAbs, dstAbs);
+    const isRenameOnly = path.dirname(urlPath) === path.dirname(dstUrlPath);
+    await logActivity(urlPath, req.user, 'edited an item', isRenameOnly ? `Renamed shared item to ${path.basename(dstUrlPath)}` : `Moved shared item to ${dstUrlPath}`);
+    await logActivity(dstUrlPath, req.user, 'edited an item', isRenameOnly ? `Renamed shared item from ${path.basename(urlPath)}` : `Moved shared item from ${urlPath}`);
     return res.status(200).json({ message: 'Done' });
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });

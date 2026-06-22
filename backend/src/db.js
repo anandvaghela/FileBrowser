@@ -156,6 +156,27 @@ userShareSchema.pre('save', async function() {
 
 const UserShare = mongoose.model('UserShare', userShareSchema);
 
+// ActivityLog Schema — tracks actions performed on files/folders for the Activity tab
+const activityLogSchema = new mongoose.Schema({
+  id: { type: Number, unique: true },
+  item_path: { type: String, required: true }, // path the activity happened on
+  user_id: { type: Number, required: true },   // refers to User.id
+  username: { type: String, default: '' },
+  action: { type: String, required: true },     // e.g. 'renamed', 'moved', 'copied', 'deleted', 'uploaded', 'shared_link', 'shared_users', 'created_folder'
+  details: { type: String, default: '' },       // human readable extra info (e.g. new name, target user)
+  created_at: { type: Number, default: () => Math.floor(Date.now() / 1000) }
+});
+
+activityLogSchema.index({ item_path: 1, created_at: -1 });
+
+activityLogSchema.pre('save', async function() {
+  if (this.isNew) {
+    this.id = await getNextSequenceValue('activity_logs');
+  }
+});
+
+const ActivityLog = mongoose.model('ActivityLog', activityLogSchema);
+
 // TusUpload Schema
 const tusUploadSchema = new mongoose.Schema({
   upload_id: { type: String, required: true, unique: true },
@@ -218,7 +239,8 @@ async function seedDb() {
       { model: Share, seqName: 'shares' },
       { model: GlobalFolder, seqName: 'global_folders' },
       { model: UserItem, seqName: 'user_items' },
-      { model: UserShare, seqName: 'user_shares' }
+      { model: UserShare, seqName: 'user_shares' },
+      { model: ActivityLog, seqName: 'activity_logs' }
     ];
 
     for (const item of collectionsToSync) {
@@ -277,5 +299,6 @@ module.exports = {
   GlobalFolder,
   UserItem,
   UserShare,
+  ActivityLog,
   TusUpload,
 };

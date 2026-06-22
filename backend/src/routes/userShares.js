@@ -2,7 +2,8 @@
 
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
-const { UserShare, User } = require('../db');
+const { UserShare, User, Share } = require('../db');
+const { logActivity } = require('./activity');
 
 const router = express.Router();
 
@@ -45,6 +46,13 @@ router.post('/', requireAuth, async (req, res) => {
       }
       await doc.save();
     }
+
+    try {
+      const sharedUsers = await User.find({ id: { $in: user_ids } });
+      const names = sharedUsers.map(u => u.username).join(', ');
+      await logActivity(item_path, req.user, 'shared_users', `Shared with ${names}`);
+    } catch { }
+
     res.json({ message: 'Shared' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -161,6 +169,36 @@ router.get('/shared-with-me', requireAuth, async (req, res) => {
     }))).filter(Boolean);
 
     res.json({ items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/user-shares/access?item_path= — "who has access" summary for the details panel
+router.get('/access', requireAuth, async (req, res) => {
+  const { item_path } = req.query;
+  if (!item_path) return res.status(400).json({ error: 'item_path required' });
+
+  try {
+    const shares = await UserShare.find({ item_path, owner_id: req.user.id });
+    const uids = shares.map(s => s.shared_with);
+    const users = await User.find({ id: { $in: uids } });
+    const userMap = new Map(users.map(u => [u.id, u.username]));
+
+    const people = shares.map(s => ({
+      id: s.shared_with,
+      username: userMap.get(s.shared_with) || '',
+      canWrite: !!s.can_write,
+    }));
+
+    const links = await Share.find({ path: item_path, user_id: req.user.id });
+
+    res.json({
+      owner: req.user.username,
+      people,
+      linkCount: links.length,
+      hasActiveLink: links.some(l => !l.expire || l.expire > Math.floor(Date.now() / 1000)),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

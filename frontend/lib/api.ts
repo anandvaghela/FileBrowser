@@ -144,6 +144,12 @@ export const userSharesApi = {
   myShares: () => api.get('/user-shares/my-shares'),
   updatePermission: (item_path: string, shared_with: number, can_write: boolean) =>
     api.patch('/user-shares', { item_path, shared_with, can_write }),
+  access: (item_path: string) => api.get('/user-shares/access', { params: { item_path } }),
+}
+
+// ── Activity ──────────────────────────────────────────────────────────────────
+export const activityApi = {
+  getForPath: (path: string) => api.get(`/activity${path}`),
 }
 
 // ── Shared Resources ───────────────────────────────────────────────────────────
@@ -164,6 +170,10 @@ export const sharedResourcesApi = {
   delete: (path: string) => api.delete(`/shared-resources${path}`),
   rename: (src: string, dst: string) =>
     api.patch(`/shared-resources${src}`, null, { params: { action: 'rename', destination: dst } }),
+  updateFile: (path: string, content: string) =>
+    api.put(`/shared-resources${path}`, content, {
+      headers: { 'Content-Type': 'text/plain' },
+    }),
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────

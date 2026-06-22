@@ -293,6 +293,7 @@ export default function SharedPage() {
       {previewTarget && (
         <FilePreviewModal
           file={previewTarget}
+          isSharedContext={true}
           onClose={() => setPreviewTarget(null)}
           onDownload={() => handleDownload(previewTarget)}
         />

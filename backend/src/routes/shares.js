@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { Share, User } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { logActivity } = require('./activity');
 const { s3, BUCKET_NAME, resolvePath, buildFileInfo, statSafe, walkDir } = require('../services/fileSystem');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const archiver = require('archiver');
@@ -104,6 +105,8 @@ router.post('/share/*', requireAuth, async (req, res) => {
       password_hash: passwordHash,
       token
     });
+
+    await logActivity(urlPath, req.user, 'shared_link', 'Created a share link');
 
     return res.json(shareToJson(newShare));
   } catch (err) {

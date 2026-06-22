@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
+import { useEffect, useState, useCallback, useRef, Suspense, useMemo } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -22,6 +22,7 @@ import FilePreviewModal from '@/components/files/FilePreviewModal'
 // Removed GlobalFolderButton and VisibilityToggle in favor of more action menu
 import MoveCopyModal from '@/components/files/MoveCopyModal'
 import ShareWithUsersModal from '@/components/files/ShareWithUsersModal'
+import DetailsPanel from '@/components/files/DetailsPanel'
 
 function FileIcon({ file, size = 'md', selected = false }: { file: any; size?: 'sm' | 'md' | 'lg'; selected?: boolean }) {
   const s = size === 'lg' ? 'w-6 h-6' : size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'
@@ -410,17 +411,23 @@ function FilesPageContent() {
   const selectAll = () => setSelected(new Set(displayItems.map((i: any) => i.path)))
   const clearSelection = () => setSelected(new Set())
 
-  const handleItemClick = (path: string, e: React.MouseEvent) => {
+  const handleItemClick = (item: any, e: React.MouseEvent) => {
     e.stopPropagation()
     if (e.ctrlKey || e.metaKey) {
       setSelected(prev => {
         const n = new Set(prev)
-        n.has(path) ? n.delete(path) : n.add(path)
+        n.has(item.path) ? n.delete(item.path) : n.add(item.path)
         return n
       })
-    } else {
-      setSelected(new Set([path]))
+      return
     }
+    setSelected(prev => {
+      if (prev.has(item.path)) {
+        return new Set()
+      } else {
+        return new Set([item.path])
+      }
+    })
   }
 
   const handleDelete = async (targets: any[]) => {
@@ -449,6 +456,16 @@ function FilesPageContent() {
     a.click()
   }
 
+  const handleMakeGlobal = async (item: any) => {
+    try {
+      await api.post('/global-folders', { folder_path: item.path })
+      toast.success('Folder made global')
+      loadDir(currentPath)
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to make folder global')
+    }
+  }
+
   const handleRemoveGlobal = async (item: any) => {
     try {
       await api.delete('/global-folders', { data: { folder_path: item.path } })
@@ -460,6 +477,21 @@ function FilesPageContent() {
   }
 
   const selectedItems = displayItems.filter((i: any) => selected.has(i.path))
+
+  const activeSidebarItem = useMemo(() => {
+    if (selectedItems.length === 1) return selectedItems[0]
+    if (selectedItems.length === 0 && currentPath !== '/') {
+      const name = currentPath.split('/').filter(Boolean).pop() || 'Home'
+      return {
+        name,
+        path: currentPath,
+        isDir: true,
+        size: 0,
+      }
+    }
+    return null
+  }, [selectedItems, currentPath])
+
   const folders = displayItems.filter((i: any) => i.isDir)
   const files = displayItems.filter((i: any) => !i.isDir)
   const canCreate = isSharedContext ? sharedCanWrite : user?.perm?.create
@@ -471,51 +503,28 @@ function FilesPageContent() {
         key={item.path}
         className={clsx(
           'rounded-xl border p-3.5 transition-all cursor-pointer group relative flex flex-col items-start justify-between select-none w-full h-[125px]',
-          isSel 
-            ? 'bg-primary-500 border-primary-500 text-white shadow-soft ring-2 ring-primary-500/20' 
+          isSel
+            ? 'bg-[#deeeff] border-[#bcdcff] text-[#0062cc] shadow-soft'
             : 'bg-white border-[#e8eaed] text-gray-800 hover:shadow-soft hover:border-gray-300'
         )}
-        onClick={(e) => {
-          if (user?.singleClick) {
-            e.stopPropagation()
-            item.isDir ? navigate(item.path) : setPreviewTarget(item)
-          } else {
-            handleItemClick(item.path, e)
-          }
-        }}
+        onClick={(e) => handleItemClick(item, e)}
         onDoubleClick={(e) => {
-          if (!user?.singleClick) {
-            e.stopPropagation()
-            item.isDir ? navigate(item.path) : setPreviewTarget(item)
+          e.stopPropagation()
+          if (item.isDir) {
+            navigate(item.path)
+          } else {
+            setPreviewTarget(item)
           }
         }}
         onContextMenu={e => handleContextMenu(e, item)}
       >
-        {/* Checkbox selector */}
-        <div 
-          onClick={e => toggleSelect(item.path, e)}
-          className={clsx(
-            'absolute top-2.5 right-9 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all bg-white z-10',
-            isSel
-              ? 'bg-white border-white text-primary-500 opacity-100'
-              : 'border-gray-300 opacity-0 group-hover:opacity-100 hover:border-gray-400'
-          )}
-        >
-          {isSel && <Check className="w-3 h-3 text-primary-500 stroke-[3]" />}
-        </div>
-
         {/* 3-dots actions button */}
         <button
           onClick={(e) => {
             e.stopPropagation()
             handleContextMenu(e, item)
           }}
-          className={clsx(
-            'absolute top-2.5 right-2.5 w-5 h-5 rounded-md flex items-center justify-center transition-all bg-white border border-gray-200 z-10 hover:bg-gray-50 text-gray-400 hover:text-gray-600 focus:outline-none',
-            isSel
-              ? 'opacity-0 pointer-events-none'
-              : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100'
-          )}
+          className="absolute top-2.5 right-2.5 w-5 h-5 rounded-md flex items-center justify-center bg-white border border-gray-200 z-10 hover:bg-gray-50 text-gray-400 hover:text-gray-600 focus:outline-none"
           title="Actions"
         >
           <MoreVertical className="w-3.5 h-3.5" />
@@ -525,13 +534,13 @@ function FilesPageContent() {
         <div className={clsx(
           'w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors',
           isSel 
-            ? 'bg-white/20' 
+            ? 'bg-white/70' 
             : item.isDir ? 'bg-blue-50' : BgIcon({ file: item })
         )}>
           {item.isDir ? (
-            <FolderOpen className={clsx('w-5 h-5', isSel ? 'text-white fill-white/20' : 'text-blue-500 fill-blue-100')} />
+            <FolderOpen className={clsx('w-5 h-5', isSel ? 'text-[#007aff] fill-[#deeeff]' : 'text-blue-500 fill-blue-100')} />
           ) : (
-            <FileIcon file={item} size="md" selected={isSel} />
+            <FileIcon file={item} size="md" selected={false} />
           )}
         </div>
 
@@ -540,15 +549,15 @@ function FilesPageContent() {
           <div className="flex items-center gap-1.5 min-w-0 w-full flex-wrap">
             <p className={clsx(
               'text-xs font-semibold truncate min-w-0 flex-1',
-              isSel ? 'text-white' : 'text-gray-800'
+              isSel ? 'text-[#0062cc]' : 'text-gray-800'
             )}>
               {item.name}
             </p>
             {item.isGlobal && (
-              <span className={clsx('text-[8px] px-1 py-0.5 rounded font-medium flex-shrink-0', isSel ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700')}>Global</span>
+              <span className={clsx('text-[8px] px-1 py-0.5 rounded font-medium flex-shrink-0', isSel ? 'bg-white/70 text-[#0062cc]' : 'bg-blue-100 text-blue-700')}>Global</span>
             )}
             {item.isSharedWithMe && (
-              <span className={clsx('text-[8px] px-1 py-0.5 rounded font-medium flex-shrink-0', isSel ? 'bg-white/20 text-white' : 'bg-green-100 text-green-700')}>Shared</span>
+              <span className={clsx('text-[8px] px-1 py-0.5 rounded font-medium flex-shrink-0', isSel ? 'bg-white/70 text-green-700' : 'bg-green-100 text-green-700')}>Shared</span>
             )}
           </div>
         </div>
@@ -556,9 +565,9 @@ function FilesPageContent() {
         {/* Bottom Details */}
         <div className={clsx(
           'w-full flex items-center justify-between text-[9px] font-medium',
-          isSel ? 'text-white/60' : 'text-gray-400'
+          isSel ? 'text-[#0062cc]/60' : 'text-gray-400'
         )}>
-          <span>{item.isDir ? '—' : formatBytes(item.size)}</span>
+          <span>{formatBytes(item.size)}</span>
           <span>
             {item.modified && !isNaN(new Date(item.modified).getTime())
               ? formatDistanceToNow(new Date(item.modified), { addSuffix: true })
@@ -576,42 +585,29 @@ function FilesPageContent() {
         key={item.path}
         className={clsx(
           'grid grid-cols-12 gap-2 px-3 sm:px-6 py-3 items-center border-b border-gray-100 last:border-0 hover:bg-gray-50/50 transition-colors cursor-pointer group select-none',
-          isSel && 'bg-primary-50/20'
+          isSel && 'bg-[#deeeff]/40'
         )}
-        onClick={(e) => {
-          if (user?.singleClick) {
-            e.stopPropagation()
-            item.isDir ? navigate(item.path) : setPreviewTarget(item)
-          } else {
-            handleItemClick(item.path, e)
-          }
-        }}
+        onClick={(e) => handleItemClick(item, e)}
         onDoubleClick={(e) => {
-          if (!user?.singleClick) {
-            e.stopPropagation()
-            item.isDir ? navigate(item.path) : setPreviewTarget(item)
+          e.stopPropagation()
+          if (item.isDir) {
+            navigate(item.path)
+          } else {
+            setPreviewTarget(item)
           }
         }}
         onContextMenu={e => handleContextMenu(e, item)}
       >
-        <div className="col-span-1" onClick={e => toggleSelect(item.path, e)}>
-          <div className={clsx(
-            'w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all bg-white',
-            isSel ? 'bg-primary-500 border-primary-500' : 'border-gray-300 group-hover:border-gray-400'
-          )}>
-            {isSel && <Check className="w-3 h-3 text-white" />}
+        <div className="col-span-8 sm:col-span-7 flex items-center gap-2 min-w-0">
+          <div className={clsx('w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0', isSel ? 'bg-[#deeeff]' : BgIcon({ file: item }))}>
+            <FileIcon file={item} selected={false} />
           </div>
-        </div>
-        <div className="col-span-7 sm:col-span-6 flex items-center gap-2 min-w-0">
-          <div className={clsx('w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0', isSel ? 'bg-primary-100' : BgIcon({ file: item }))}>
-            <FileIcon file={item} selected={isSel} />
-          </div>
-          <span className={clsx('text-xs sm:text-sm font-semibold truncate', isSel ? 'text-primary-700' : 'text-gray-800')}>{item.name}</span>
+          <span className={clsx('text-xs sm:text-sm font-semibold truncate', isSel ? 'text-[#0062cc]' : 'text-gray-800')}>{item.name}</span>
           {item.isGlobal && <span className="text-[9px] px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium flex-shrink-0 hidden sm:inline">Global</span>}
           {item.isSharedWithMe && <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded-full font-medium flex-shrink-0 hidden sm:inline">Shared</span>}
         </div>
         <div className="hidden sm:block col-span-2 text-xs text-gray-400">
-          {item.isDir ? '—' : formatBytes(item.size)}
+          {formatBytes(item.size)}
         </div>
         <div className="hidden md:block col-span-2 text-xs text-gray-400">
           {item.modified && !isNaN(new Date(item.modified).getTime()) ? formatDistanceToNow(new Date(item.modified), { addSuffix: true }) : '—'}
@@ -635,8 +631,9 @@ function FilesPageContent() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#f8f9fb]" {...getRootProps()}>
+    <div className="flex h-full" {...getRootProps()}>
       <input {...getInputProps()} />
+      <div className="flex flex-col flex-1 min-w-0 bg-[#f8f9fb] relative">
 
       {/* Drag overlay */}
       {isDragActive && (
@@ -670,48 +667,37 @@ function FilesPageContent() {
         </div>
 
         {/* Sort and Actions */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {selected.size > 0 && (
-            <div className="flex items-center gap-0.5 bg-blue-50/50 px-1.5 py-0.5 rounded-lg border border-blue-100/50 animate-fade-in">
-              {selected.size === 1 && user?.perm?.share && (
-                <button onClick={() => setShareTarget(selectedItems[0])} className="p-1.5 rounded-lg text-gray-500 hover:bg-white hover:text-primary-600 transition-all" title="Share"><Share2 className="w-3.5 h-3.5" /></button>
+        <div className="flex items-center gap-4 flex-shrink-0">
+          {/* View mode toggle pill (styled like Image 2) */}
+          <div className="flex items-center border border-gray-200 rounded-full overflow-hidden h-7 select-none bg-white shadow-sm">
+            <button
+              onClick={() => setViewMode('list')}
+              className={clsx(
+                "h-full px-3 flex items-center justify-center gap-1 transition-colors focus:outline-none border-r border-gray-150 text-[11px]",
+                viewMode === 'list'
+                  ? "bg-[#deeeff] text-[#0062cc] font-semibold"
+                  : "bg-white text-gray-500 hover:text-gray-700"
               )}
-              {selected.size === 1 && selectedItems[0].isDir && user?.perm?.admin && (
-                <button onClick={async () => { const item = selectedItems[0]; try { if (item.isGlobal) { await handleRemoveGlobal(item) } else { await api.post('/global-folders', { folder_path: item.path }); toast.success('Folder is now global'); loadDir(currentPath) } clearSelection() } catch (err: any) { toast.error(err.response?.data?.error || 'Failed') } }} className={clsx('p-1.5 rounded-lg transition-all', selectedItems[0].isGlobal ? 'text-orange-500' : 'text-gray-500 hover:text-blue-600')} title="Global"><Globe className="w-3.5 h-3.5" /></button>
-              )}
-              {selected.size === 1 && user?.perm?.rename && (
-                <button onClick={() => setRenameTarget(selectedItems[0])} className="p-1.5 rounded-lg text-gray-500 hover:bg-white hover:text-primary-600 transition-all" title="Rename"><Edit2 className="w-3.5 h-3.5" /></button>
-              )}
-              {user?.perm?.create && (
-                <button onClick={() => { setMoveCopyTargets(selectedItems); setMoveCopyAction('copy') }} className="p-1.5 rounded-lg text-gray-500 hover:bg-white hover:text-primary-600 transition-all hidden sm:block" title="Copy"><Copy className="w-3.5 h-3.5" /></button>
-              )}
-              {user?.perm?.rename && (
-                <button onClick={() => { setMoveCopyTargets(selectedItems); setMoveCopyAction('move') }} className="p-1.5 rounded-lg text-gray-500 hover:bg-white hover:text-primary-600 transition-all hidden sm:block" title="Move"><ArrowRight className="w-3.5 h-3.5" /></button>
-              )}
-              {user?.perm?.delete && (
-                <button onClick={() => setDeleteTargets(selectedItems)} className="p-1.5 rounded-lg text-red-500 hover:bg-white hover:text-red-600 transition-all" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
-              )}
-            </div>
-          )}
-          <div className="flex items-center gap-0.5 bg-gray-50 px-1 sm:px-1.5 py-0.5 rounded-lg border border-gray-100/50">
-            <button onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')} className="p-1 rounded-lg text-gray-400 hover:bg-white hover:text-gray-600 hover:shadow-sm transition-all focus:outline-none" title="Toggle view">
-              {viewMode === 'grid' ? <List className="w-4 h-4" /> : <Grid3X3 className="w-4 h-4" />}
+              title="List view"
+            >
+              {viewMode === 'list' && <Check className="w-2.5 h-2.5 text-[#0062cc]" />}
+              <List className="w-3.5 h-3.5" />
             </button>
-            <button onClick={() => { if (selected.size > 0) selectedItems.forEach(item => handleDownload(item)); else toast.error('Select files to download') }} disabled={selected.size === 0} className={clsx('p-1 rounded-lg transition-all focus:outline-none hidden sm:block', selected.size > 0 ? 'text-gray-600 hover:bg-white hover:shadow-sm' : 'text-gray-300 cursor-not-allowed')} title="Download">
-              <Download className="w-4 h-4" />
-            </button>
-            {user?.perm?.create && (
-              <button onClick={open} className="p-1 rounded-lg text-gray-400 hover:bg-white hover:text-gray-600 hover:shadow-sm transition-all focus:outline-none hidden sm:block" title="Upload"><Upload className="w-4 h-4" /></button>
-            )}
-            <button onClick={() => { const fc = items.filter(i => i.isDir).length; const ff = items.filter(i => !i.isDir).length; toast.success(`Folders: ${fc}  Files: ${ff}`, { duration: 3000 }) }} className="p-1 rounded-lg text-gray-400 hover:bg-white hover:text-gray-600 hover:shadow-sm transition-all focus:outline-none hidden sm:block" title="Info"><Info className="w-4 h-4" /></button>
-            <button onClick={() => { if (selected.size > 0) clearSelection(); else selectAll() }} className={clsx('p-1 rounded-lg transition-all focus:outline-none', selected.size > 0 ? 'text-blue-600 hover:bg-white hover:shadow-sm' : 'text-gray-400 hover:bg-white hover:text-gray-600 hover:shadow-sm')} title="Select all">
-              <Check className="w-4 h-4" />
+            <button
+              onClick={() => setViewMode('grid')}
+              className={clsx(
+                "h-full px-3 flex items-center justify-center gap-1 transition-colors focus:outline-none text-[11px]",
+                viewMode === 'grid'
+                  ? "bg-[#deeeff] text-[#0062cc] font-semibold"
+                  : "bg-white text-gray-500 hover:text-gray-700"
+              )}
+              title="Grid view"
+            >
+              {viewMode === 'grid' && <Check className="w-2.5 h-2.5 text-[#0062cc]" />}
+              <Grid3X3 className="w-3.5 h-3.5" />
             </button>
           </div>
-          <button onClick={() => setSortAsc(a => !a)} className="text-gray-400 hover:text-gray-600 transition-colors flex items-center gap-1 text-xs font-semibold focus:outline-none">
-            <ArrowUpDown className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Sort</span>
-          </button>
+
         </div>
       </div>
 
@@ -731,7 +717,7 @@ function FilesPageContent() {
       )}
 
       {/* File list / grid */}
-      <div className="flex-1 overflow-auto p-3 sm:p-6">
+      <div className="flex-1 overflow-auto p-3 sm:p-6" onClick={clearSelection}>
         {loading ? (
           <div className={clsx('gap-2 sm:gap-3', viewMode === 'grid' ? 'grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5' : 'flex flex-col')}>
             {[...Array(12)].map((_, i) => (
@@ -752,13 +738,7 @@ function FilesPageContent() {
           <div className="bg-white rounded-xl border border-[#e8eaed] overflow-hidden shadow-soft">
             {/* Header hidden on mobile */}
             <div className="hidden sm:grid grid-cols-12 gap-2 px-6 py-3 border-b border-gray-100 text-xs font-semibold text-gray-400 tracking-wide select-none">
-              <div className="col-span-1">
-                <div onClick={() => { selected.size === displayItems.length && displayItems.length > 0 ? clearSelection() : selectAll() }}
-                  className={clsx('w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer', selected.size === displayItems.length && displayItems.length > 0 ? 'bg-primary-500 border-primary-500' : 'border-gray-300 bg-white hover:border-gray-400')}>
-                  {selected.size === displayItems.length && displayItems.length > 0 && <Check className="w-3 h-3 text-white" />}
-                </div>
-              </div>
-              <button className="col-span-6 text-left hover:text-gray-600 flex items-center gap-1 focus:outline-none" onClick={() => { setSortBy('name'); setSortAsc(a => sortBy === 'name' ? !a : true) }}>Name {sortBy === 'name' && <ArrowUpDown className="w-3 h-3 text-gray-400" />}</button>
+              <button className="col-span-7 text-left hover:text-gray-600 flex items-center gap-1 focus:outline-none" onClick={() => { setSortBy('name'); setSortAsc(a => sortBy === 'name' ? !a : true) }}>Name {sortBy === 'name' && <ArrowUpDown className="w-3 h-3 text-gray-400" />}</button>
               <button className="col-span-2 text-left hover:text-gray-600 flex items-center gap-1 focus:outline-none" onClick={() => { setSortBy('size'); setSortAsc(a => sortBy === 'size' ? !a : true) }}>Size {sortBy === 'size' && <ArrowUpDown className="w-3 h-3 text-gray-400" />}</button>
               <button className="col-span-2 text-left hover:text-gray-600 flex items-center gap-1 focus:outline-none" onClick={() => { setSortBy('modified'); setSortAsc(a => sortBy === 'modified' ? !a : true) }}>Modified {sortBy === 'modified' && <ArrowUpDown className="w-3 h-3 text-gray-400" />}</button>
               <div className="col-span-1" />
@@ -832,6 +812,7 @@ function FilesPageContent() {
       {previewTarget && (
         <FilePreviewModal
           file={previewTarget}
+          isSharedContext={isSharedContext}
           onClose={() => setPreviewTarget(null)}
           onDownload={() => handleDownload(previewTarget)}
           onDelete={user?.perm?.delete ? () => { setPreviewTarget(null); setDeleteTargets([previewTarget]) } : undefined}
@@ -853,7 +834,7 @@ function FilesPageContent() {
       )}
       {/* FAB */}
       {canCreate && (
-        <div className="fixed bottom-20 sm:bottom-8 right-4 sm:right-8 z-40 flex flex-col items-end gap-2 group">
+        <div className="fixed bottom-20 sm:bottom-8 z-40 flex flex-col items-end gap-2 group transition-all duration-300 right-4 lg:right-[320px] xl:right-[350px]">
           <div className={clsx(
             "flex flex-col items-end gap-2 transition-all duration-200",
             fabOpen 
@@ -884,33 +865,17 @@ function FilesPageContent() {
 
       {contextMenu && (
         <div
-          className="fixed bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48 sm:w-52 z-50 text-left animate-fade-in"
+          className="fixed bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-44 z-50 text-left animate-fade-in"
           style={{
-            top: Math.min(contextMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 600) - 300),
-            left: Math.min(contextMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 400) - 200)
+            top: Math.min(contextMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 600) - 220),
+            left: Math.min(contextMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 400) - 180)
           }}
           onClick={e => e.stopPropagation()}
         >
-          {user?.perm?.share && (
-            <button 
-              onClick={() => { setShareTarget(contextMenu.item); setContextMenu(null) }} 
-              className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
-            >
-              <Share2 className="w-4 h-4 text-gray-500" />
-              <span>Share link</span>
-            </button>
-          )}
-          <button 
-            onClick={() => { setShareWithUsersTarget(contextMenu.item); setContextMenu(null) }} 
-            className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
-          >
-            <Users className="w-4 h-4 text-gray-500" />
-            <span>Share with users</span>
-          </button>
           {user?.perm?.rename && (
             <button 
               onClick={() => { setRenameTarget(contextMenu.item); setContextMenu(null) }} 
-              className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
+              className="w-full px-4 py-2.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
             >
               <Edit2 className="w-4 h-4 text-gray-500" />
               <span>Rename</span>
@@ -919,7 +884,7 @@ function FilesPageContent() {
           {user?.perm?.create && (
             <button 
               onClick={() => { setMoveCopyTargets([contextMenu.item]); setMoveCopyAction('copy'); setContextMenu(null) }} 
-              className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
+              className="w-full px-4 py-2.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
             >
               <Copy className="w-4 h-4 text-gray-500" />
               <span>Copy file</span>
@@ -928,74 +893,55 @@ function FilesPageContent() {
           {user?.perm?.rename && (
             <button 
               onClick={() => { setMoveCopyTargets([contextMenu.item]); setMoveCopyAction('move'); setContextMenu(null) }} 
-              className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
+              className="w-full px-4 py-2.5 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
             >
               <ArrowRight className="w-4 h-4 text-gray-500" />
               <span>Move file</span>
             </button>
           )}
-          {user?.perm?.admin && contextMenu.item.isDir && !contextMenu.item.isGlobal && (
-            <button 
-              onClick={() => {
-                api.post('/global-folders', { folder_path: contextMenu.item.path })
-                  .then(() => { toast.success('Folder is now global'); loadDir(currentPath) })
-                  .catch((err: any) => toast.error(err.response?.data?.error || 'Failed'))
-                setContextMenu(null)
-              }} 
-              className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
-            >
-              <Globe className="w-4 h-4 text-blue-500" />
-              <span>Make Global</span>
-            </button>
-          )}
-          {user?.perm?.admin && contextMenu.item.isGlobal && (
-            <button 
-              onClick={() => { handleRemoveGlobal(contextMenu.item); setContextMenu(null) }} 
-              className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 font-semibold"
-            >
-              <Globe className="w-4 h-4 text-orange-500" />
-              <span>Remove Global</span>
-            </button>
-          )}
-          {!user?.perm?.admin && contextMenu.item.isDir && (
-            <VisibilityContextMenuItem item={contextMenu.item} onClose={() => setContextMenu(null)} />
-          )}
           {user?.perm?.delete && !contextMenu.item.isGlobal && (
             <button 
               onClick={() => { setDeleteTargets([contextMenu.item]); setContextMenu(null) }} 
-              className="w-full px-4 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-3 font-semibold"
+              className="w-full px-4 py-2.5 text-xs text-red-600 hover:bg-red-50 flex items-center gap-3 font-semibold border-t border-gray-100"
             >
               <Trash2 className="w-4 h-4 text-red-500" />
               <span>Delete</span>
             </button>
           )}
-          {user?.perm?.download && (
-            <button 
-              onClick={() => { handleDownload(contextMenu.item); setContextMenu(null) }} 
-              className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between font-semibold"
-            >
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Download className="w-4 h-4 text-gray-500" />
-                  <span className="absolute -bottom-1 -right-1 bg-blue-500 text-white rounded-full text-[7px] w-2.5 h-2.5 flex items-center justify-center font-bold">1</span>
-                </div>
-                <span>Download</span>
-              </div>
-            </button>
+          {user?.perm?.admin && contextMenu.item.isDir && (
+            contextMenu.item.isGlobal ? (
+              <button 
+                onClick={() => { handleRemoveGlobal(contextMenu.item); setContextMenu(null) }} 
+                className="w-full px-4 py-2.5 text-xs text-red-600 hover:bg-red-50 flex items-center gap-3 font-semibold border-t border-gray-100"
+              >
+                <Globe className="w-4 h-4 text-red-500" />
+                <span>Remove Global</span>
+              </button>
+            ) : (
+              <button 
+                onClick={() => { handleMakeGlobal(contextMenu.item); setContextMenu(null) }} 
+                className="w-full px-4 py-2.5 text-xs text-[#007aff] hover:bg-blue-50 flex items-center gap-3 font-semibold border-t border-gray-100"
+              >
+                <Globe className="w-4 h-4 text-[#007aff]" />
+                <span>Make Global</span>
+              </button>
+            )
           )}
-          <button 
-            onClick={() => {
-              const item = contextMenu.item
-              toast.success(`Path: ${item.path}\nSize: ${item.isDir ? 'Directory' : formatBytes(item.size)}\nModified: ${new Date(item.modified).toLocaleString()}`, { duration: 4000 })
-              setContextMenu(null)
-            }} 
-            className="w-full px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-3 border-t border-gray-100 font-semibold"
-          >
-            <Info className="w-4 h-4 text-gray-500" />
-            <span>Info</span>
-          </button>
         </div>
       )}
+      </div>
+      <DetailsPanel
+        currentPath={currentPath}
+        items={items}
+        selectedItem={selectedItems.length === 1 ? selectedItems[0] : null}
+        onNavigate={navigate}
+        onClearSelection={clearSelection}
+        onShareLink={user?.perm?.share && activeSidebarItem ? () => setShareTarget(activeSidebarItem) : undefined}
+        onShareUsers={activeSidebarItem ? () => setShareWithUsersTarget(activeSidebarItem) : undefined}
+        onDownload={user?.perm?.download && activeSidebarItem ? () => handleDownload(activeSidebarItem) : undefined}
+        onMakeGlobal={user?.perm?.admin && activeSidebarItem ? () => handleMakeGlobal(activeSidebarItem) : undefined}
+        onRemoveGlobal={user?.perm?.admin && activeSidebarItem ? () => handleRemoveGlobal(activeSidebarItem) : undefined}
+      />
     </div>
   )
 }

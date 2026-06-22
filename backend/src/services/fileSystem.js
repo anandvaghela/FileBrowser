@@ -211,13 +211,25 @@ async function listDir(key, urlPathPrefix) {
       Delimiter: '/'
     }));
 
-    const folders = (data.CommonPrefixes || []).map(p => {
+    const folders = await Promise.all((data.CommonPrefixes || []).map(async p => {
       const name = p.Prefix.slice(prefix.length).replace(/\/$/, '');
       const childUrl = (urlPathPrefix === '/' ? '' : urlPathPrefix) + '/' + name;
+
+      let folderSize = 0;
+      try {
+        const subData = await s3.send(new ListObjectsV2Command({
+          Bucket: BUCKET_NAME,
+          Prefix: p.Prefix,
+        }));
+        folderSize = (subData.Contents || []).reduce((sum, item) => sum + item.Size, 0);
+      } catch (err) {
+        // ignore
+      }
+
       return {
         path: childUrl,
         name,
-        size: 0,
+        size: folderSize,
         extension: '',
         modified: new Date().toISOString(),
         mode: 16877,
@@ -227,7 +239,7 @@ async function listDir(key, urlPathPrefix) {
         mimeType: '',
         isGlobal: false,
       };
-    });
+    }));
 
     const files = (data.Contents || [])
       .filter(item => item.Key !== prefix)

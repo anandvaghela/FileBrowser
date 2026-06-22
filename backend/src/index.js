@@ -25,6 +25,7 @@ const globalFoldersRoutes = require('./routes/globalFolders');
 const userItemsRoutes = require('./routes/userItems');
 const userSharesRoutes = require('./routes/userShares');
 const sharedResourcesRoutes = require('./routes/sharedResources');
+const activityRoutes = require('./routes/activity');
 
 const { getDb } = require('./db');
 
@@ -69,8 +70,7 @@ app.use(`${baseURL}/api-docs`, swaggerUi.serve, swaggerUi.setup(swaggerDocument)
 // Auth
 app.use(`${api}`, authRoutes);
 
-// File resources — order matters: /recursive before /* wildcard
-app.use(`${api}/resources/recursive`, resourceRoutes);
+// File resources (recursive route is defined before the generic wildcard inside resources.js)
 app.use(`${api}/resources`, resourceRoutes);
 
 // Users
@@ -108,6 +108,7 @@ app.use(`${api}/user-shares`, userSharesRoutes);
 
 // Shared resources (user B accessing user A's files)
 app.use(`${api}/shared-resources`, sharedResourcesRoutes);
+app.use(`${api}/activity`, activityRoutes);
 
 // ── 404 / Error handlers ──────────────────────────────────────────────────────
 app.use((req, res) => {

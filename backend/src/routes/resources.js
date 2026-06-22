@@ -18,6 +18,7 @@ const {
   addVersionSuffix,
 } = require('../services/fileSystem');
 const { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
+const { logActivity } = require('./activity');
 
 const router = express.Router();
 
@@ -50,6 +51,63 @@ router.use(async (req, res, next) => {
     console.error('Error in user home base restriction middleware:', err);
   }
   next();
+});
+
+// GET /api/resources/recursive/* — flat recursive listing (must be declared before the generic GET /* below)
+router.get('/recursive/*', requireAuth, async (req, res) => {
+  const urlPath = '/' + (req.params[0] || '');
+  try {
+    const absPath = await resolvePath(req.user.scope, urlPath);
+    const stat = await statSafe(absPath);
+    if (!stat) return res.status(404).json({ error: 'Not found' });
+    if (!stat.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
+
+    let entries = await walkDir(absPath, urlPath);
+
+    // Filter items hidden from admin by users, and filter out userHomeBase for users whose scope is outside it
+    try {
+      const { Settings } = require('../db');
+      const settings = await Settings.findOne({ id: 1 });
+      const userHomeBase = (settings ? settings.user_home_base : '/users').replace(/\/$/, '');
+      const userScope = req.user.scope.replace(/\/$/, '');
+      const isScopeUnderBase = userScope === userHomeBase || userScope.startsWith(userHomeBase + '/');
+
+      entries = entries.filter(item => {
+        const itemPath = item.path.replace(/\/$/, '');
+        if (!isScopeUnderBase && (itemPath === userHomeBase || itemPath.startsWith(userHomeBase + '/'))) {
+          return false;
+        }
+        return true;
+      });
+
+      if (req.user.perm.admin) {
+        const hiddenRows = await UserItem.find({ show_to_admin: 0 });
+        const userIds = hiddenRows.map(r => r.user_id);
+        const users = await User.find({ id: { $in: userIds } });
+        const userMap = new Map(users.map(u => [u.id, u.scope]));
+
+        const hiddenPaths = new Set();
+        for (const row of hiddenRows) {
+          const scope = (userMap.get(row.user_id) || '').replace(/\/$/, '');
+          const ipath = row.item_path.replace(/\/$/, '');
+          hiddenPaths.add((scope + ipath).replace(/\/$/, '') || '/');
+          hiddenPaths.add(ipath);
+        }
+
+        entries = entries.filter(item => {
+          const normalised = item.path.replace(/\/$/, '');
+          return !hiddenPaths.has(normalised);
+        });
+      }
+    } catch (err) {
+      console.error('Failed to filter recursive entries:', err);
+    }
+
+    return res.json(entries);
+  } catch (err) {
+    if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/resources/*  — list directory or get file info
@@ -167,6 +225,7 @@ router.post('/*', requireAuth, upload.single('file'), async (req, res) => {
         Key: s3Prefix,
         Body: ''
       }));
+      await logActivity(urlPath.replace(/\/$/, '') || '/', req.user, 'created_folder', 'Created folder');
       return res.status(200).json({ message: 'Directory created' });
     }
 
@@ -205,6 +264,7 @@ router.post('/*', requireAuth, upload.single('file'), async (req, res) => {
     const stat = await statSafe(absPath);
     const etag = `"${stat.mtime.getTime().toString(16)}${stat.size.toString(16)}"`;
     res.setHeader('ETag', etag);
+    await logActivity(urlPath, req.user, exists ? 'edited an item' : 'uploaded', exists ? 'Replaced file' : 'Uploaded file');
     return res.status(200).json({ message: 'File uploaded' });
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
@@ -252,6 +312,7 @@ router.put('/*', requireAuth, upload.single('file'), async (req, res) => {
     const stat = await statSafe(absPath);
     const etag = `"${stat.mtime.getTime().toString(16)}${stat.size.toString(16)}"`;
     res.setHeader('ETag', etag);
+    await logActivity(urlPath, req.user, 'edited an item', 'Updated file content');
     return res.status(200).json({ message: 'File updated' });
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
@@ -280,6 +341,8 @@ router.delete('/*', requireAuth, async (req, res) => {
     // Remove associated shares
     const pathEscaped = urlPath.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
     await Share.deleteMany({ path: new RegExp('^' + pathEscaped) });
+
+    await logActivity(urlPath, req.user, 'deleted', `Deleted ${stat.isDirectory() ? 'folder' : 'file'}`);
 
     // Remove associated global folders
     await GlobalFolder.deleteMany({
@@ -351,6 +414,8 @@ router.patch('/*', requireAuth, async (req, res) => {
       }
       if (rename) dstAbs = await addVersionSuffix(dstAbs);
       await copyPath(srcAbs, dstAbs);
+      await logActivity(urlPath, req.user, 'copied an item', `Copied to ${dstUrlPath}`);
+      await logActivity(dstUrlPath, req.user, 'copied an item', `Copied from ${urlPath}`);
     } else if (action === 'rename') {
       if (!req.user.perm.rename) return res.status(403).json({ error: 'Rename permission denied' });
       const destExists = await statSafe(dstAbs);
@@ -359,6 +424,8 @@ router.patch('/*', requireAuth, async (req, res) => {
       }
       if (rename) dstAbs = await addVersionSuffix(dstAbs);
       await movePath(srcAbs, dstAbs);
+      const isRenameOnly = path.dirname(urlPath) === path.dirname(dstUrlPath);
+      await logActivity(dstUrlPath, req.user, 'edited an item', isRenameOnly ? `Renamed to ${path.basename(dstUrlPath)}` : `Moved from ${urlPath}`);
 
       // Update global folders paths in DB
       const rows = await GlobalFolder.find({});
@@ -376,23 +443,6 @@ router.patch('/*', requireAuth, async (req, res) => {
     }
 
     return res.status(200).json({ message: 'Done' });
-  } catch (err) {
-    if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/resources/recursive/* — flat recursive listing
-router.get('/recursive/*', requireAuth, async (req, res) => {
-  const urlPath = '/' + (req.params[0] || '');
-  try {
-    const absPath = await resolvePath(req.user.scope, urlPath);
-    const stat = await statSafe(absPath);
-    if (!stat) return res.status(404).json({ error: 'Not found' });
-    if (!stat.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
-
-    const entries = await walkDir(absPath, urlPath);
-    return res.json(entries);
   } catch (err) {
     if (err.code === 'FORBIDDEN') return res.status(403).json({ error: err.message });
     return res.status(500).json({ error: err.message });

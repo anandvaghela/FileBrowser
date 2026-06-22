@@ -2,13 +2,13 @@
 import { useEffect, useState } from 'react'
 import { X, Download, Trash2, Share2, Edit2, ZoomIn, ZoomOut, RotateCcw, ExternalLink, Save } from 'lucide-react'
 import { clsx } from 'clsx'
-import { rawUrl, previewUrl, formatBytes, resourcesApi, getUser } from '@/lib/api'
+import { rawUrl, previewUrl, formatBytes, resourcesApi, getUser, sharedResourcesApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { formatDistanceToNow } from 'date-fns'
 import Button from '@/components/ui/Button'
 
 export default function FilePreviewModal({
-  file, onClose, onDownload, onDelete, onShare, onRename
+  file, onClose, onDownload, onDelete, onShare, onRename, isSharedContext
 }: {
   file: any
   onClose: () => void
@@ -16,6 +16,7 @@ export default function FilePreviewModal({
   onDelete?: () => void
   onShare?: () => void
   onRename?: () => void
+  isSharedContext?: boolean
 }) {
   const [textContent, setTextContent] = useState<string | null>(null)
   const [originalContent, setOriginalContent] = useState<string | null>(null)
@@ -32,7 +33,11 @@ export default function FilePreviewModal({
     if (textContent === null) return
     setSaving(true)
     try {
-      await resourcesApi.updateFile(file.path, textContent)
+      if (isSharedContext) {
+        await sharedResourcesApi.updateFile(file.path, textContent)
+      } else {
+        await resourcesApi.updateFile(file.path, textContent)
+      }
       toast.success('File saved successfully')
       setOriginalContent(textContent)
     } catch (err: any) {
