@@ -22,7 +22,6 @@ import { FileItem, User } from '@/types'
 
 import FileGridCard from './FileGridCard'
 import FileListRow from './FileListRow'
-import VisibilityContextMenuItem from './VisibilityContextMenuItem'
 
 export default function FilesPageContent() {
   const searchParams = useSearchParams()
@@ -757,9 +756,7 @@ export default function FilesPageContent() {
               </button>
             )
           )}
-          {user?.perm?.admin && (
-            <VisibilityContextMenuItem item={contextMenu.item} onClose={() => setContextMenu(null)} />
-          )}
+
         </div>
       )}
       </div>
