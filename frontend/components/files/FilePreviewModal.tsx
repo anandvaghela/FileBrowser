@@ -78,7 +78,7 @@ export default function FilePreviewModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4 animate-fade-in">
-      <div className="bg-white sm:rounded-xl shadow-modal w-full sm:max-w-4xl max-h-[95vh] sm:max-h-[90vh] flex flex-col animate-slide-up border-t sm:border border-[#e8eaed] rounded-t-2xl sm:rounded-xl">
+      <div className="bg-white sm:rounded-xl shadow-modal w-full sm:w-[80vw] sm:max-w-[80vw] h-[95vh] sm:h-[80vh] max-h-[95vh] sm:max-h-[80vh] flex flex-col animate-slide-up border-t sm:border border-[#e8eaed] rounded-t-2xl sm:rounded-xl">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-6 py-3 sm:py-4 border-b border-[#e8eaed] flex-shrink-0">
           <div className="flex items-start justify-between w-full sm:w-auto min-w-0 gap-4">
@@ -163,16 +163,16 @@ export default function FilePreviewModal({
                 src={previewUrl(file.path, 'big')}
                 alt={file.name}
                 className="object-contain transition-transform duration-200 rounded-lg shadow-soft"
-                style={{ transform: `scale(${zoom})`, transformOrigin: 'center', maxWidth: '100%', maxHeight: '60vh' }}
+                style={{ transform: `scale(${zoom})`, transformOrigin: 'center', maxWidth: '100%', maxHeight: '100%' }}
               />
             </div>
           )}
 
           {isVideo && (
-            <div className="w-full p-6">
+            <div className="w-full p-6 h-full flex items-center justify-center">
               <video
                 controls
-                className="w-full max-h-[60vh] rounded-lg bg-black shadow-soft"
+                className="w-full max-h-full rounded-lg bg-black shadow-soft"
                 src={rawUrl(file.path)}
               >
                 Your browser does not support video playback.
@@ -200,7 +200,7 @@ export default function FilePreviewModal({
             <div className="w-full h-full flex flex-col p-4">
               <iframe
                 src={rawFileUrl}
-                className="flex-1 rounded-lg border border-[#e8eaed] min-h-[60vh] bg-white"
+                className="flex-1 rounded-lg border border-[#e8eaed] h-full bg-white"
                 title={file.name}
               />
             </div>
@@ -210,27 +210,27 @@ export default function FilePreviewModal({
             <div className="w-full h-full flex flex-col p-4">
               <iframe
                 src={`https://docs.google.com/viewer?url=${encodeURIComponent(rawFileUrl)}&embedded=true`}
-                className="flex-1 rounded-lg border border-[#e8eaed] min-h-[60vh] bg-white"
+                className="flex-1 rounded-lg border border-[#e8eaed] h-full bg-white"
                 title={file.name}
               />
             </div>
           )}
 
           {isText && (
-            <div className="w-full h-full p-4 flex flex-col min-h-[350px]">
+            <div className="w-full h-full p-4 flex flex-col">
               {loading ? (
-                <div className="flex items-center justify-center h-48">
+                <div className="flex items-center justify-center h-full">
                   <div className="w-6 h-6 border-2 border-primary-200 border-t-primary-500 rounded-full animate-spin" />
                 </div>
               ) : user?.perm?.modify ? (
                 <textarea
                   value={textContent || ''}
                   onChange={e => setTextContent(e.target.value)}
-                  className="w-full flex-1 min-h-[300px] bg-white rounded-lg border border-[#e8eaed] p-4 text-xs text-gray-700 font-mono leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 resize-y text-left"
+                  className="w-full flex-1 h-full bg-white rounded-lg border border-[#e8eaed] p-4 text-xs text-gray-700 font-mono leading-relaxed focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 resize-none text-left"
                   autoFocus
                 />
               ) : (
-                <pre className="bg-white rounded-lg border border-[#e8eaed] p-4 text-xs text-gray-700 overflow-auto max-h-[60vh] font-mono leading-relaxed whitespace-pre-wrap break-words text-left w-full">
+                <pre className="bg-white rounded-lg border border-[#e8eaed] p-4 text-xs text-gray-700 overflow-auto flex-1 h-full font-mono leading-relaxed whitespace-pre-wrap break-words text-left w-full">
                   {textContent}
                 </pre>
               )}
