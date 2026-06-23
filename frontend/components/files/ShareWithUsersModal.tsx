@@ -5,6 +5,7 @@ import { usersApi, userSharesApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import Button from '@/components/ui/Button'
 import { clsx } from 'clsx'
+import { FileItem, User, UserShare } from '@/types'
 
 const getAvatarStyles = (username: string) => {
   const hash = Array.from(username).reduce((acc, char) => acc + char.charCodeAt(0), 0)
@@ -84,9 +85,9 @@ function RoleDropdown({ userId, canWrite, onChange, isOpen, onToggle }: RoleDrop
   )
 }
 
-export default function ShareWithUsersModal({ file, onClose }: { file: any; onClose: () => void }) {
-  const [users, setUsers] = useState<any[]>([])
-  const [existingShares, setExistingShares] = useState<any[]>([])
+export default function ShareWithUsersModal({ file, onClose }: { file: FileItem; onClose: () => void }) {
+  const [users, setUsers] = useState<User[]>([])
+  const [existingShares, setExistingShares] = useState<UserShare[]>([])
   const [selected, setSelected] = useState<Map<number, boolean>>(new Map())
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
@@ -104,7 +105,7 @@ export default function ShareWithUsersModal({ file, onClose }: { file: any; onCl
         const shares = sharesRes.data.shares || []
         setExistingShares(shares)
         const map = new Map<number, boolean>()
-        shares.forEach((s: any) => map.set(s.shared_with, !!s.can_write))
+        shares.forEach((s: UserShare) => map.set(s.shared_with, !!s.can_write))
         setSelected(map)
       } catch { toast.error('Failed to load users') }
       finally { setLoading(false) }

@@ -7,8 +7,9 @@ import {
 import { clsx } from 'clsx'
 import { resourcesApi, userSharesApi, activityApi, formatBytes, getUser, api } from '@/lib/api'
 import { format, formatDistanceToNow } from 'date-fns'
+import { FileItem } from '@/types'
 
-function ItemIcon({ item, className }: { item: any; className?: string }) {
+function ItemIcon({ item, className }: { item: FileItem; className?: string }) {
   if (item.isDir) return <Folder className={clsx('text-blue-500 fill-blue-100', className)} />
   const t = item.type || ''
   if (t === 'image') return <ImageIcon className={clsx('text-pink-500', className)} />
@@ -126,8 +127,8 @@ export default function DetailsPanel({
   onRemoveGlobal,
 }: {
   currentPath: string
-  items: any[]
-  selectedItem: any | null
+  items: FileItem[]
+  selectedItem: FileItem | null
   onNavigate: (path: string) => void
   onClearSelection: () => void
   onShareLink?: () => void
@@ -137,7 +138,7 @@ export default function DetailsPanel({
   onRemoveGlobal?: () => void
 }) {
   const [tree, setTree] = useState<TreeNode | null>(null)
-  const [allItemsRecursive, setAllItemsRecursive] = useState<any[]>([])
+  const [allItemsRecursive, setAllItemsRecursive] = useState<FileItem[]>([])
   const [tab, setTab] = useState<'details' | 'activity'>('details')
   const [access, setAccess] = useState<any | null>(null)
   const [activity, setActivity] = useState<any[]>([])
@@ -220,7 +221,7 @@ export default function DetailsPanel({
     }
   }, [allItemsRecursive, activePath, user])
  
-  const displayItem = useMemo(() => {
+  const displayItem = useMemo<FileItem>(() => {
     if (selectedItem) return selectedItem
  
     const isRoot = currentPath === '/' || currentPath === ''
@@ -235,7 +236,7 @@ export default function DetailsPanel({
       created: activeStats.created,
       isGlobal: globalPaths.has(currentPath.replace(/\/$/, '')),
       isVirtual: true,
-    }
+    } as FileItem
   }, [selectedItem, currentPath, activeStats, globalPaths])
  
   const showTree = currentPath === '/' && displayItem?.isDir

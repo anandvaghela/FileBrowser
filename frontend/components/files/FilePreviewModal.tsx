@@ -6,11 +6,12 @@ import { rawUrl, formatBytes, resourcesApi, getUser, sharedResourcesApi } from '
 import toast from 'react-hot-toast'
 import { formatDistanceToNow } from 'date-fns'
 import Button from '@/components/ui/Button'
+import { FileItem } from '@/types'
 
 export default function FilePreviewModal({
   file, onClose, onDownload, onDelete, onShare, onRename, isSharedContext
 }: {
-  file: any
+  file: FileItem
   onClose: () => void
   onDownload: () => void
   onDelete?: () => void
@@ -81,7 +82,7 @@ export default function FilePreviewModal({
             <div className="min-w-0 flex-1">
               <h2 className="font-bold text-gray-800 text-[15px] truncate" title={file.name}>{file.name}</h2>
               <p className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">
-                {formatBytes(file.size)} · Modified {formatDistanceToNow(new Date(file.modified), { addSuffix: true })}
+                {formatBytes(file.size)} · Modified {file.modified ? formatDistanceToNow(new Date(file.modified), { addSuffix: true }) : 'never'}
               </p>
             </div>
             {/* Close button on mobile */}

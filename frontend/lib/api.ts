@@ -1,5 +1,6 @@
 import axios from 'axios'
 import Cookies from 'js-cookie'
+import { User, SystemSettings } from '@/types'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://filebrowser-server.onrender.com'
 
@@ -179,7 +180,7 @@ export const sharedResourcesApi = {
 // ── Settings ──────────────────────────────────────────────────────────────────
 export const settingsApi = {
   get: () => api.get('/settings'),
-  update: (data: any) => api.put('/settings', data),
+  update: (data: Partial<SystemSettings>) => api.put('/settings', data),
 }
 
 // ── Usage ─────────────────────────────────────────────────────────────────────
@@ -201,7 +202,7 @@ export function getToken(): string | null {
   return Cookies.get('fb_token') || localStorage.getItem('fb_token')
 }
 
-export function setToken(token: string, user: any) {
+export function setToken(token: string, user: User) {
   Cookies.set('fb_token', token, { expires: 1 })
   localStorage.setItem('fb_token', token)
   localStorage.setItem('fb_user', JSON.stringify(user))
@@ -213,7 +214,7 @@ export function clearAuth() {
   localStorage.removeItem('fb_user')
 }
 
-export function getUser(): any | null {
+export function getUser(): User | null {
   if (typeof window === 'undefined') return null
   const u = localStorage.getItem('fb_user')
   return u ? JSON.parse(u) : null
