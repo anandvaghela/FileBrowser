@@ -111,13 +111,16 @@ async function statSafe(key) {
       const list = await s3.send(new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
         Prefix: prefix,
-        MaxKeys: 1
       }));
-      if (list.Contents && list.Contents.length > 0) {
+      const contents = list.Contents || [];
+      if (contents.length > 0) {
+        const times = contents.map(item => new Date(item.LastModified).getTime());
+        const maxTime = new Date(Math.max(...times));
+        const totalSize = contents.reduce((sum, item) => sum + item.Size, 0);
         return {
           isDirectory: () => true,
-          size: 0,
-          mtime: new Date(),
+          size: totalSize,
+          mtime: maxTime,
         };
       }
     } catch (e) {
@@ -134,7 +137,7 @@ async function statSafe(key) {
         return {
           isDirectory: () => true,
           size: 0,
-          mtime: new Date(),
+          mtime: userExists.created_at ? new Date(userExists.created_at * 1000) : new Date(),
         };
       }
 
@@ -143,7 +146,7 @@ async function statSafe(key) {
         return {
           isDirectory: () => true,
           size: 0,
-          mtime: new Date(),
+          mtime: globalExists.created_at ? new Date(globalExists.created_at * 1000) : new Date(),
         };
       }
     } catch (e) {
@@ -216,12 +219,18 @@ async function listDir(key, urlPathPrefix) {
       const childUrl = (urlPathPrefix === '/' ? '' : urlPathPrefix) + '/' + name;
 
       let folderSize = 0;
+      let folderMtime = new Date();
       try {
         const subData = await s3.send(new ListObjectsV2Command({
           Bucket: BUCKET_NAME,
           Prefix: p.Prefix,
         }));
-        folderSize = (subData.Contents || []).reduce((sum, item) => sum + item.Size, 0);
+        const contents = subData.Contents || [];
+        folderSize = contents.reduce((sum, item) => sum + item.Size, 0);
+        if (contents.length > 0) {
+          const times = contents.map(item => new Date(item.LastModified).getTime());
+          folderMtime = new Date(Math.max(...times));
+        }
       } catch (err) {
         // ignore
       }
@@ -231,7 +240,7 @@ async function listDir(key, urlPathPrefix) {
         name,
         size: folderSize,
         extension: '',
-        modified: new Date().toISOString(),
+        modified: folderMtime.toISOString(),
         mode: 16877,
         isDir: true,
         isSymlink: false,
