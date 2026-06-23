@@ -19,7 +19,7 @@ export default function Button({
   iconPosition = 'left',
   disabled,
   ...props
-}: ButtonProps) {
+}: Readonly<ButtonProps>) {
   const base =
     'inline-flex items-center justify-center font-bold transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none select-none focus:outline-none rounded-full cursor-pointer whitespace-nowrap'
 

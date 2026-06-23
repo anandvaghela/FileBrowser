@@ -3,13 +3,13 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   FolderOpen, Upload, FolderPlus, Grid3X3,
-  List, Trash2, Edit2, Copy, Home, MoreVertical, ArrowUpDown,
-  Check, RefreshCw, ArrowRight, Globe, Users
+  List, Trash2, Edit2, Copy, Home, ArrowUpDown,
+  Check, ArrowRight, Globe, Users
 } from 'lucide-react'
 import { useDropzone } from 'react-dropzone'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
-import { resourcesApi, rawUrl, formatBytes, getUser, api, sharedResourcesApi } from '@/lib/api'
+import { resourcesApi, rawUrl, getUser, api, sharedResourcesApi } from '@/lib/api'
 import ShareModal from '@/components/files/ShareModal'
 import RenameModal from '@/components/files/RenameModal'
 import NewFolderModal from '@/components/files/NewFolderModal'
@@ -230,7 +230,7 @@ export default function FilesPageContent() {
               isDir: !!raw.dir,
               size: raw.size || 0,
               modified: raw.modified || new Date().toISOString(),
-              type: raw.dir ? 'directory' : 'blob',
+              type: raw.dir ? 'directory' : 'file',
             } as FileItem
           } catch { return null }
         }).filter((item): item is FileItem => item !== null)

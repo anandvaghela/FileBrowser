@@ -23,7 +23,7 @@ export interface FileItem {
   modified?: string | null
   isDir: boolean
   isSymlink?: boolean
-  type?: 'directory' | 'text' | 'pdf' | 'blob' | (string & {})
+  type?: 'directory' | 'text' | 'pdf' | 'file' | (string & {})
   mimeType?: string
   isGlobal?: boolean
   sharedBy?: string

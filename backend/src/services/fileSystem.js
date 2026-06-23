@@ -277,11 +277,11 @@ async function listDir(key, urlPathPrefix) {
 
 function getFileType(mimeType, isDir) {
   if (isDir) return 'directory';
-  if (!mimeType) return 'blob';
+  if (!mimeType) return 'file';
   if (mimeType.startsWith('text/')) return 'text';
   if (mimeType === 'application/json' || mimeType === 'application/javascript') return 'text';
   if (mimeType === 'application/pdf') return 'pdf';
-  return 'blob';
+  return 'file';
 }
 
 /**

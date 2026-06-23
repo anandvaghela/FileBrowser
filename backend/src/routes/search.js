@@ -126,7 +126,7 @@ router.get('/*', requireAuth, async (req, res) => {
     if (m.startsWith('video/')) return 'video';
     if (m.startsWith('audio/')) return 'audio';
     if (m.startsWith('text/')) return 'text';
-    return 'blob';
+    return 'file';
   }
 
   function matchesQuery(name, key, isDir) {

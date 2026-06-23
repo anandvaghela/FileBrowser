@@ -32,6 +32,7 @@ async function getShareAccess(userId, itemPath) {
       scope: owner.scope
     };
   } catch (e) {
+    console.error('Error in getShareAccess:', e);
     return null;
   }
 }
