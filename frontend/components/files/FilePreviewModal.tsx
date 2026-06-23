@@ -48,13 +48,12 @@ export default function FilePreviewModal({
   }
 
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('fb_token') : ''
-  const isImage = file.type === 'image'
-  const isVideo = file.type === 'video'
-  const isAudio = file.type === 'audio'
-  const isPdf = file.type === 'pdf'
-  const isText = file.type === 'text'
-
   const ext = file.name?.split('.').pop()?.toLowerCase() || ''
+  const isImage = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
+  const isVideo = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
+  const isAudio = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
+  const isPdf = file.type === 'pdf' || ext === 'pdf'
+  const isText = file.type === 'text' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'md'].includes(ext)
   const isOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'csv'].includes(ext)
   // For office & pdf fallback: Google Docs Viewer needs a publicly accessible URL — we pass the raw URL
   const rawFileUrl = rawUrl(file.path)

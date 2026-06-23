@@ -27,23 +27,29 @@ import DetailsPanel from '@/components/files/DetailsPanel'
 function FileIcon({ file, size = 'md', selected = false }: { file: any; size?: 'sm' | 'md' | 'lg'; selected?: boolean }) {
   const s = size === 'lg' ? 'w-6 h-6' : size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'
   if (file.isDir) return <FolderOpen className={clsx(s, selected ? 'text-white fill-white/20' : 'text-blue-500 fill-blue-100')} />
-  const t = file.type || ''
+  
+  const ext = (file.extension || file.name?.split('.').pop() || '').toLowerCase().replace(/^\./, '')
+  const isImg = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
+  const isVid = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
+  const isAud = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
+  const isTxtOrPdf = file.type === 'text' || file.type === 'pdf' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'pdf'].includes(ext)
+  
   const colorClass = selected 
     ? 'text-white' 
-    : t === 'image' 
+    : isImg
     ? 'text-pink-500' 
-    : t === 'video' 
+    : isVid
     ? 'text-purple-500' 
-    : t === 'audio' 
+    : isAud
     ? 'text-green-500' 
-    : t === 'text' || t === 'pdf' 
+    : isTxtOrPdf 
     ? 'text-orange-500' 
     : 'text-gray-400'
   
-  if (t === 'image') return <Image className={clsx(s, colorClass)} />
-  if (t === 'video') return <Film className={clsx(s, colorClass)} />
-  if (t === 'audio') return <Music className={clsx(s, colorClass)} />
-  if (t === 'text' || t === 'pdf') return <FileText className={clsx(s, colorClass)} />
+  if (isImg) return <Image className={clsx(s, colorClass)} />
+  if (isVid) return <Film className={clsx(s, colorClass)} />
+  if (isAud) return <Music className={clsx(s, colorClass)} />
+  if (isTxtOrPdf) return <FileText className={clsx(s, colorClass)} />
   return <File className={clsx(s, colorClass)} />
 }
 
@@ -648,8 +654,14 @@ function FilesPageContent() {
 
       {/* Path Breadcrumbs Sub-Header */}
       <div className="flex-shrink-0 bg-white border-b border-gray-100 px-3 sm:px-6 py-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1 text-sm text-gray-500 min-w-0 flex-1 overflow-hidden">
-          <Home className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+        <div className="flex items-center gap-1.5 text-sm text-gray-500 min-w-0 flex-1 overflow-hidden">
+          <button
+            onClick={() => navigate('/')}
+            className="hover:text-blue-600 transition-colors focus:outline-none flex-shrink-0"
+            title="Home"
+          >
+            <Home className="w-3.5 h-3.5 text-gray-400 hover:text-blue-600 transition-colors" />
+          </button>
           <span className="text-gray-300 flex-shrink-0">/</span>
           <div className="flex items-center gap-1 overflow-hidden">
             {breadcrumb.slice(-(3)).map((b, i, arr) => (

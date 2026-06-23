@@ -15,33 +15,44 @@ import FilePreviewModal from '@/components/files/FilePreviewModal'
 function FileIcon({ file, size = 'md', selected = false }: { file: any; size?: 'sm' | 'md' | 'lg'; selected?: boolean }) {
   const s = size === 'lg' ? 'w-6 h-6' : size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4'
   if (file.isDir) return <FolderOpen className={clsx(s, selected ? 'text-white fill-white/20' : 'text-blue-500 fill-blue-100')} />
-  const t = file.type || ''
+  
+  const ext = (file.extension || file.name?.split('.').pop() || '').toLowerCase().replace(/^\./, '')
+  const isImg = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
+  const isVid = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
+  const isAud = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
+  const isTxtOrPdf = file.type === 'text' || file.type === 'pdf' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'pdf'].includes(ext)
+  
   const colorClass = selected 
     ? 'text-white' 
-    : t === 'image' 
+    : isImg
     ? 'text-pink-500' 
-    : t === 'video' 
+    : isVid
     ? 'text-purple-500' 
-    : t === 'audio' 
+    : isAud
     ? 'text-green-500' 
-    : t === 'text' || t === 'pdf' 
+    : isTxtOrPdf 
     ? 'text-orange-500' 
     : 'text-gray-400'
   
-  if (t === 'image') return <Image className={clsx(s, colorClass)} />
-  if (t === 'video') return <Film className={clsx(s, colorClass)} />
-  if (t === 'audio') return <Music className={clsx(s, colorClass)} />
-  if (t === 'text' || t === 'pdf') return <FileText className={clsx(s, colorClass)} />
+  if (isImg) return <Image className={clsx(s, colorClass)} />
+  if (isVid) return <Film className={clsx(s, colorClass)} />
+  if (isAud) return <Music className={clsx(s, colorClass)} />
+  if (isTxtOrPdf) return <FileText className={clsx(s, colorClass)} />
   return <File className={clsx(s, colorClass)} />
 }
 
 function BgIcon({ file }: { file: any }) {
   if (file.isDir) return 'bg-blue-50'
-  const t = file.type || ''
-  if (t === 'image') return 'bg-pink-50'
-  if (t === 'video') return 'bg-purple-50'
-  if (t === 'audio') return 'bg-green-50'
-  if (t === 'text' || t === 'pdf') return 'bg-orange-50'
+  const ext = (file.extension || file.name?.split('.').pop() || '').toLowerCase().replace(/^\./, '')
+  const isImg = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
+  const isVid = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
+  const isAud = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
+  const isTxtOrPdf = file.type === 'text' || file.type === 'pdf' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'pdf'].includes(ext)
+
+  if (isImg) return 'bg-pink-50'
+  if (isVid) return 'bg-purple-50'
+  if (isAud) return 'bg-green-50'
+  if (isTxtOrPdf) return 'bg-orange-50'
   return 'bg-gray-50'
 }
 
