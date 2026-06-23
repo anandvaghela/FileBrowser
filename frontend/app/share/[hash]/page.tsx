@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
-import { Download, FolderOpen, File, Lock, Eye, EyeOff, Image, Film, Music, FileText } from 'lucide-react'
+import { Download, FolderOpen, File, Lock, Eye, EyeOff, FileText } from 'lucide-react'
 import axios from 'axios'
 import { formatBytes } from '@/lib/api'
 import { formatDistanceToNow } from 'date-fns'
@@ -22,14 +22,8 @@ const publicSharesApi = {
 function FileIcon({ file }: { file: any }) {
   if (file.isDir) return <FolderOpen className="w-4 h-4 text-primary-500" />
   const ext = (file.extension || file.name?.split('.').pop() || '').toLowerCase().replace(/^\./, '')
-  const isImg = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
-  const isVid = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
-  const isAud = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
   const isTxtOrPdf = file.type === 'text' || file.type === 'pdf' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'pdf'].includes(ext)
 
-  if (isImg) return <Image className="w-4 h-4 text-pink-500" />
-  if (isVid) return <Film className="w-4 h-4 text-purple-500" />
-  if (isAud) return <Music className="w-4 h-4 text-emerald-500" />
   if (isTxtOrPdf) return <FileText className="w-4 h-4 text-amber-500" />
   return <File className="w-4 h-4 text-gray-400" />
 }

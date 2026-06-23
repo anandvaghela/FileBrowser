@@ -1,8 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { X, Download, Trash2, Share2, Edit2, ZoomIn, ZoomOut, RotateCcw, ExternalLink, Save } from 'lucide-react'
+import { X, Download, Trash2, Share2, Edit2, ExternalLink, Save } from 'lucide-react'
 import { clsx } from 'clsx'
-import { rawUrl, previewUrl, formatBytes, resourcesApi, getUser, sharedResourcesApi } from '@/lib/api'
+import { rawUrl, formatBytes, resourcesApi, getUser, sharedResourcesApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { formatDistanceToNow } from 'date-fns'
 import Button from '@/components/ui/Button'
@@ -21,7 +21,6 @@ export default function FilePreviewModal({
   const [textContent, setTextContent] = useState<string | null>(null)
   const [originalContent, setOriginalContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [zoom, setZoom] = useState(1)
   const [saving, setSaving] = useState(false)
   const [user, setUser] = useState<any>(null)
 
@@ -49,9 +48,6 @@ export default function FilePreviewModal({
 
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('fb_token') : ''
   const ext = file.name?.split('.').pop()?.toLowerCase() || ''
-  const isImage = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
-  const isVideo = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
-  const isAudio = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
   const isPdf = file.type === 'pdf' || ext === 'pdf'
   const isText = file.type === 'text' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'md'].includes(ext)
   const isOffice = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'csv'].includes(ext)
@@ -95,26 +91,6 @@ export default function FilePreviewModal({
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap justify-start sm:justify-end w-full sm:w-auto">
-            {isImage && (
-              <>
-                <button onClick={() => setZoom(z => Math.min(z + 0.25, 3))}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
-                  title="Zoom In">
-                  <ZoomIn className="w-4 h-4" />
-                </button>
-                <button onClick={() => setZoom(z => Math.max(z - 0.25, 0.25))}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
-                  title="Zoom Out">
-                  <ZoomOut className="w-4 h-4" />
-                </button>
-                <button onClick={() => setZoom(1)}
-                  className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
-                  title="Reset Zoom">
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-              </>
-            )}
-
             {isText && user?.perm?.modify && textContent !== originalContent && textContent !== null && (
               <button
                 onClick={handleSave}
@@ -157,45 +133,6 @@ export default function FilePreviewModal({
 
         {/* Content */}
         <div className="flex-1 overflow-auto flex items-center justify-center bg-gray-50 rounded-b-xl min-h-0">
-          {isImage && (
-            <div className="overflow-auto w-full h-full flex items-center justify-center p-6">
-              <img
-                src={previewUrl(file.path, 'big')}
-                alt={file.name}
-                className="object-contain transition-transform duration-200 rounded-lg shadow-soft"
-                style={{ transform: `scale(${zoom})`, transformOrigin: 'center', maxWidth: '100%', maxHeight: '100%' }}
-              />
-            </div>
-          )}
-
-          {isVideo && (
-            <div className="w-full p-6 h-full flex items-center justify-center">
-              <video
-                controls
-                className="w-full max-h-full rounded-lg bg-black shadow-soft"
-                src={rawUrl(file.path)}
-              >
-                Your browser does not support video playback.
-              </video>
-            </div>
-          )}
-
-          {isAudio && (
-            <div className="p-8">
-              <div className="bg-white rounded-xl shadow-soft border border-[#e8eaed] p-8 text-center max-w-sm">
-                <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-green-500" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                  </svg>
-                </div>
-                <p className="text-sm font-semibold text-gray-800 mb-4 truncate">{file.name}</p>
-                <audio controls className="w-full" src={rawUrl(file.path)}>
-                  Your browser does not support audio playback.
-                </audio>
-              </div>
-            </div>
-          )}
-
           {isPdf && (
             <div className="w-full h-full flex flex-col p-4">
               <iframe
@@ -237,7 +174,7 @@ export default function FilePreviewModal({
             </div>
           )}
 
-          {!isImage && !isVideo && !isAudio && !isPdf && !isText && !isOffice && (
+          {!isPdf && !isText && !isOffice && (
             <div className="text-center p-12">
               <div className="w-16 h-16 rounded-xl bg-gray-100 flex items-center justify-center mx-auto mb-4 border border-[#e8eaed]">
                 <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   FolderOpen, File, Grid3X3, List, Download,
-  Image, Film, Music, FileText, ArrowUpDown,
+  FileText, ArrowUpDown,
   Search, Info, Users, Shield, ShieldAlert
 } from 'lucide-react'
 import { api, getUser, rawUrl, previewUrl, formatBytes } from '@/lib/api'
@@ -17,26 +17,14 @@ function FileIcon({ file, size = 'md', selected = false }: { file: any; size?: '
   if (file.isDir) return <FolderOpen className={clsx(s, selected ? 'text-white fill-white/20' : 'text-blue-500 fill-blue-100')} />
   
   const ext = (file.extension || file.name?.split('.').pop() || '').toLowerCase().replace(/^\./, '')
-  const isImg = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
-  const isVid = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
-  const isAud = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
   const isTxtOrPdf = file.type === 'text' || file.type === 'pdf' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'pdf'].includes(ext)
   
   const colorClass = selected 
     ? 'text-white' 
-    : isImg
-    ? 'text-pink-500' 
-    : isVid
-    ? 'text-purple-500' 
-    : isAud
-    ? 'text-green-500' 
     : isTxtOrPdf 
     ? 'text-orange-500' 
     : 'text-gray-400'
   
-  if (isImg) return <Image className={clsx(s, colorClass)} />
-  if (isVid) return <Film className={clsx(s, colorClass)} />
-  if (isAud) return <Music className={clsx(s, colorClass)} />
   if (isTxtOrPdf) return <FileText className={clsx(s, colorClass)} />
   return <File className={clsx(s, colorClass)} />
 }
@@ -44,14 +32,8 @@ function FileIcon({ file, size = 'md', selected = false }: { file: any; size?: '
 function BgIcon({ file }: { file: any }) {
   if (file.isDir) return 'bg-blue-50'
   const ext = (file.extension || file.name?.split('.').pop() || '').toLowerCase().replace(/^\./, '')
-  const isImg = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
-  const isVid = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
-  const isAud = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
   const isTxtOrPdf = file.type === 'text' || file.type === 'pdf' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'pdf'].includes(ext)
 
-  if (isImg) return 'bg-pink-50'
-  if (isVid) return 'bg-purple-50'
-  if (isAud) return 'bg-green-50'
   if (isTxtOrPdf) return 'bg-orange-50'
   return 'bg-gray-50'
 }

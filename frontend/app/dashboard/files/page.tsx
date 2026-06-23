@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   FolderOpen, File, Upload, FolderPlus, Search, Grid3X3,
   List, Download, Trash2, Edit2, Copy, Share2, ChevronRight,
-  Home, MoreVertical, ArrowUpDown, Image, Film, Music,
+  Home, MoreVertical, ArrowUpDown,
   FileText, Archive, X, Check, RefreshCw, Info, Save, Menu,
   ArrowRight, Folder, Globe, Users, Eye, EyeOff
 } from 'lucide-react'
@@ -29,26 +29,14 @@ function FileIcon({ file, size = 'md', selected = false }: { file: any; size?: '
   if (file.isDir) return <FolderOpen className={clsx(s, selected ? 'text-white fill-white/20' : 'text-blue-500 fill-blue-100')} />
   
   const ext = (file.extension || file.name?.split('.').pop() || '').toLowerCase().replace(/^\./, '')
-  const isImg = file.type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'ico'].includes(ext)
-  const isVid = file.type === 'video' || ['mp4', 'webm', 'mkv', 'avi', 'mov', 'wmv', 'flv'].includes(ext)
-  const isAud = file.type === 'audio' || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)
   const isTxtOrPdf = file.type === 'text' || file.type === 'pdf' || ['txt', 'html', 'css', 'json', 'js', 'ts', 'tsx', 'pdf'].includes(ext)
   
   const colorClass = selected 
     ? 'text-white' 
-    : isImg
-    ? 'text-pink-500' 
-    : isVid
-    ? 'text-purple-500' 
-    : isAud
-    ? 'text-green-500' 
     : isTxtOrPdf 
     ? 'text-orange-500' 
     : 'text-gray-400'
   
-  if (isImg) return <Image className={clsx(s, colorClass)} />
-  if (isVid) return <Film className={clsx(s, colorClass)} />
-  if (isAud) return <Music className={clsx(s, colorClass)} />
   if (isTxtOrPdf) return <FileText className={clsx(s, colorClass)} />
   return <File className={clsx(s, colorClass)} />
 }
